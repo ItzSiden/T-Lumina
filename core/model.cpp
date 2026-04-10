@@ -61,7 +61,7 @@ void extract_fp32(Tensor& t, const std::string& name, std::unordered_map<std::st
         t.size = raw.data.size() / 2;
         t.data = new float[t.size]();
         const uint16_t* fp16_data = reinterpret_cast<const uint16_t*>(raw.data.data());
-        for (int i = 0; i < t.size; ++i) {
+        for (size_t i = 0; i < t.size; ++i) {
             t.data[i] = fp16_to_fp32(fp16_data[i]);
         }
     } else {
@@ -83,7 +83,7 @@ void extract_fp32_optional(Tensor& t, const std::string& name, int expected_size
             t.size = raw.data.size() / 2;
             t.data = new float[t.size]();
             const uint16_t* fp16_data = reinterpret_cast<const uint16_t*>(raw.data.data());
-            for (int i = 0; i < t.size; ++i) {
+            for (size_t i = 0; i < t.size; ++i) {
                 t.data[i] = fp16_to_fp32(fp16_data[i]);
             }
         } else {
@@ -97,7 +97,7 @@ void extract_fp32_optional(Tensor& t, const std::string& name, int expected_size
         t.size = expected_size;
         t.data = new float[t.size]();
         if (use_identity) {
-            for (int i = 0; i < t.size; ++i) t.data[i] = 1.0f; // Identity for norm weights
+            for (size_t i = 0; i < t.size; ++i) t.data[i] = 1.0f; // Identity for norm weights
         }
         std::cout << "  ⚠ Missing: " << name << " (initialized with " 
                   << (use_identity ? "identity" : "zeros") << ")" << std::endl;
