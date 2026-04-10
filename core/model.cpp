@@ -7,8 +7,11 @@
 #include <cstring>
 #include <cmath>
 #include <stdexcept>
+#include <limits>
 
 namespace {
+constexpr uint32_t kMaxTensorNameLen = 4096;
+
 std::string find_existing_name(
     const std::unordered_map<std::string, TensorRaw>& raw_tensors,
     const std::vector<std::string>& candidates
@@ -20,6 +23,19 @@ std::string find_existing_name(
         }
     }
     return "";
+}
+
+template <typename T>
+void read_exact(std::ifstream& f, T& out, const std::string& what) {
+    if (!f.read(reinterpret_cast<char*>(&out), sizeof(T))) {
+        throw std::runtime_error("Corrupted binary model file: failed to read " + what);
+    }
+}
+
+void read_exact_bytes(std::ifstream& f, char* out, size_t len, const std::string& what) {
+    if (!f.read(out, static_cast<std::streamsize>(len))) {
+        throw std::runtime_error("Corrupted binary model file: failed to read " + what);
+    }
 }
 
 void decode_float_tensor(
@@ -37,18 +53,34 @@ void decode_float_tensor(
         fp32_matches_expected ||
         (!fp16_matches_expected && bytes % 4 == 0 && expected_size > 0);
 
+    if (bytes == 0) {
+        throw std::runtime_error("Invalid empty tensor payload");
+    }
+
     if (treat_as_fp32) {
+        if (bytes % 4 != 0) {
+            throw std::runtime_error("Invalid FP32 tensor byte length: " + std::to_string(bytes));
+        }
         t.size = bytes / 4;
         t.data = new float[t.size]();
         std::memcpy(t.data, raw.data.data(), t.size * sizeof(float));
-        return;
+    } else {
+        if (bytes % 2 != 0) {
+            throw std::runtime_error("Invalid FP16 tensor byte length: " + std::to_string(bytes));
+        }
+        t.size = bytes / 2;
+        t.data = new float[t.size]();
+        const uint16_t* fp16_data = reinterpret_cast<const uint16_t*>(raw.data.data());
+        for (size_t i = 0; i < t.size; ++i) {
+            t.data[i] = fp16_to_fp32(fp16_data[i]);
+        }
     }
 
-    t.size = bytes / 2;
-    t.data = new float[t.size]();
-    const uint16_t* fp16_data = reinterpret_cast<const uint16_t*>(raw.data.data());
-    for (size_t i = 0; i < t.size; ++i) {
-        t.data[i] = fp16_to_fp32(fp16_data[i]);
+    if (expected_size > 0 && t.size != expected_size) {
+        throw std::runtime_error(
+            "Tensor shape/size mismatch. Expected elements=" + std::to_string(expected_size) +
+            ", loaded=" + std::to_string(t.size)
+        );
     }
 }
 }
@@ -118,6 +150,9 @@ void extract_ternary(Tensor& t, const std::string& name, std::unordered_map<std:
         throw std::runtime_error("Missing ternary size metadata in binary file: " + size_name);
     }
     int orig_size = raw_tensors[size_name].int_val;
+    if (orig_size <= 0) {
+        throw std::runtime_error("Invalid ternary size for " + size_name + ": " + std::to_string(orig_size));
+    }
     t.size = orig_size;
     t.data_i8 = new int8_t[orig_size]();
     unpack_5in8(raw_tensors[packed_name].data.data(), t.data_i8, orig_size);
@@ -130,24 +165,39 @@ void TLuminaModel::load(const std::string& path) {
     std::cout << "\n📂 Parsing binary model file..." << std::endl;
     
     std::unordered_map<std::string, TensorRaw> raw_tensors;
-    uint32_t name_len;
-    
-    while (f.read(reinterpret_cast<char*>(&name_len), 4)) {
-        std::string name(name_len, ' '); f.read(&name[0], name_len);
-        uint32_t type; f.read(reinterpret_cast<char*>(&type), 4);
+    while (true) {
+        uint32_t name_len = 0;
+        if (!f.read(reinterpret_cast<char*>(&name_len), sizeof(name_len))) {
+            if (f.eof()) break;
+            throw std::runtime_error("Corrupted binary model file: failed to read tensor name length");
+        }
+        if (name_len == 0 || name_len > kMaxTensorNameLen) {
+            throw std::runtime_error("Corrupted binary model file: invalid tensor name length " + std::to_string(name_len));
+        }
+
+        std::string name(name_len, ' ');
+        read_exact_bytes(f, &name[0], name_len, "tensor name");
+
+        uint32_t type = 0;
+        read_exact(f, type, "tensor type");
         
         TensorRaw tr; tr.type = type;
         if (type == 1 || type == 2) {
-            uint32_t len; f.read(reinterpret_cast<char*>(&len), 4);
-            tr.data.resize(len); f.read(reinterpret_cast<char*>(tr.data.data()), len);
+            uint32_t len = 0;
+            read_exact(f, len, "tensor payload length");
+            if (len == 0 || len > std::numeric_limits<uint32_t>::max() / 2) {
+                throw std::runtime_error("Corrupted binary model file: invalid payload length for " + name);
+            }
+            tr.data.resize(len);
+            read_exact_bytes(f, reinterpret_cast<char*>(tr.data.data()), len, "tensor payload");
         } else if (type == 4) {
             // Backward-compatible parser:
             // - old format: [len=4][int32 value]
             // - some exporters: [int32 value] (no len field)
-            uint32_t first;
-            f.read(reinterpret_cast<char*>(&first), 4);
+            uint32_t first = 0;
+            read_exact(f, first, "int32 scalar payload");
             if (first == 4) {
-                f.read(reinterpret_cast<char*>(&tr.int_val), 4);
+                read_exact(f, tr.int_val, "int32 scalar value");
             } else {
                 tr.int_val = static_cast<int>(first);
             }
@@ -155,13 +205,15 @@ void TLuminaModel::load(const std::string& path) {
             // Backward-compatible parser:
             // - old format: [len=4][float32 value]
             // - some exporters: [float32 value] (no len field)
-            uint32_t first;
-            f.read(reinterpret_cast<char*>(&first), 4);
+            uint32_t first = 0;
+            read_exact(f, first, "float32 scalar payload");
             if (first == 4) {
-                f.read(reinterpret_cast<char*>(&tr.float_val), 4);
+                read_exact(f, tr.float_val, "float32 scalar value");
             } else {
                 std::memcpy(&tr.float_val, &first, sizeof(float));
             }
+        } else {
+            throw std::runtime_error("Unsupported tensor type " + std::to_string(type) + " for entry: " + name);
         }
         raw_tensors[name] = std::move(tr);
     }
@@ -213,7 +265,7 @@ void TLuminaModel::load(const std::string& path) {
     
     // Optional layers with fallback initialization
     extract_fp32_optional(norm_w, "model.norm.weight", d_model, raw_tensors, true);  // Identity for norm
-    extract_fp32_optional(head_w, "lm_head.weight", vocab_size * d_model, raw_tensors, false); // Zeros for head
+    extract_fp32_optional(head_w, "lm_head.weight", static_cast<size_t>(vocab_size) * d_model, raw_tensors, false); // Zeros for head
 
     blocks.resize(n_layers);
     for (int i = 0; i < n_layers; ++i) {
