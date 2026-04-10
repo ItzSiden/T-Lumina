@@ -87,3 +87,8 @@ g++ -O3 -march=native -std=c++17 -Wall main.cpp core/model.cpp -o tlumina_infere
 **Architecture invented and engineered by:**<br>
 **© 2026 Abdul Aleem** <br>
 *Student & AI Researcher | Dinajpur, Bangladesh*
+
+---
+
+## 📄 License
+This project is licensed under the MIT License. Feel free to use, modify, and distribute, but please attribute the original author.
