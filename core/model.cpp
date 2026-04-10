@@ -6,6 +6,52 @@
 #include <iostream>
 #include <cstring>
 #include <cmath>
+#include <stdexcept>
+
+namespace {
+std::string find_existing_name(
+    const std::unordered_map<std::string, TensorRaw>& raw_tensors,
+    const std::vector<std::string>& candidates
+) {
+    for (const auto& candidate : candidates) {
+        auto it = raw_tensors.find(candidate);
+        if (it != raw_tensors.end() && !it->second.data.empty()) {
+            return candidate;
+        }
+    }
+    return "";
+}
+
+void decode_float_tensor(
+    Tensor& t,
+    const TensorRaw& raw,
+    size_t expected_size = 0
+) {
+    const size_t bytes = raw.data.size();
+    const bool fp16_matches_expected = expected_size > 0 && bytes == expected_size * 2;
+    const bool fp32_matches_expected = expected_size > 0 && bytes == expected_size * 4;
+
+    // Some exporters mistakenly tag FP32 tensors as type=1.
+    const bool treat_as_fp32 =
+        (raw.type != 1) ||
+        fp32_matches_expected ||
+        (!fp16_matches_expected && bytes % 4 == 0 && expected_size > 0);
+
+    if (treat_as_fp32) {
+        t.size = bytes / 4;
+        t.data = new float[t.size]();
+        std::memcpy(t.data, raw.data.data(), t.size * sizeof(float));
+        return;
+    }
+
+    t.size = bytes / 2;
+    t.data = new float[t.size]();
+    const uint16_t* fp16_data = reinterpret_cast<const uint16_t*>(raw.data.data());
+    for (size_t i = 0; i < t.size; ++i) {
+        t.data[i] = fp16_to_fp32(fp16_data[i]);
+    }
+}
+}
 
 TLuminaModel::TLuminaModel() {
     head_dim = d_model / n_heads;
@@ -34,55 +80,28 @@ void rms_norm(const float* x, float* out, const float* w, int d) {
 }
 
 // ⚡ FIXED: Extract FP32 with FP16 conversion support (uses fp16_to_fp32 from packing.h)
-void extract_fp32(Tensor& t, const std::string& name, std::unordered_map<std::string, TensorRaw>& raw_tensors) {
+void extract_fp32(Tensor& t, const std::string& name, std::unordered_map<std::string, TensorRaw>& raw_tensors, size_t expected_size = 0) {
     if (raw_tensors.find(name) == raw_tensors.end() || raw_tensors[name].data.empty()) {
-        std::cerr << "\n[CRITICAL ERROR] Missing Layer in binary file: " << name << std::endl;
-        exit(1);
+        throw std::runtime_error("Missing layer in binary file: " + name);
     }
     const TensorRaw& raw = raw_tensors[name];
-    
-    // Type 1 = FP16 Tensor, so divide by 2 for element count
-    if (raw.type == 1) {
-        t.size = raw.data.size() / 2;
-        t.data = new float[t.size]();
-        const uint16_t* fp16_data = reinterpret_cast<const uint16_t*>(raw.data.data());
-        for (int i = 0; i < t.size; ++i) {
-            t.data[i] = fp16_to_fp32(fp16_data[i]);
-        }
-    } else {
-        // Assume FP32 (type 0 or unspecified)
-        t.size = raw.data.size() / 4;
-        t.data = new float[t.size]();
-        std::memcpy(t.data, raw.data.data(), raw.data.size());
-    }
+    decode_float_tensor(t, raw, expected_size);
 }
 
 // ⚡ OPTIONAL: Extract FP32 with fallback initialization
-void extract_fp32_optional(Tensor& t, const std::string& name, int expected_size, 
+void extract_fp32_optional(Tensor& t, const std::string& name, size_t expected_size, 
                            std::unordered_map<std::string, TensorRaw>& raw_tensors, 
                            bool use_identity = false) {
     if (raw_tensors.find(name) != raw_tensors.end() && !raw_tensors[name].data.empty()) {
         const TensorRaw& raw = raw_tensors[name];
-        
-        if (raw.type == 1) {
-            t.size = raw.data.size() / 2;
-            t.data = new float[t.size]();
-            const uint16_t* fp16_data = reinterpret_cast<const uint16_t*>(raw.data.data());
-            for (int i = 0; i < t.size; ++i) {
-                t.data[i] = fp16_to_fp32(fp16_data[i]);
-            }
-        } else {
-            t.size = raw.data.size() / 4;
-            t.data = new float[t.size]();
-            std::memcpy(t.data, raw.data.data(), raw.data.size());
-        }
+        decode_float_tensor(t, raw, expected_size);
         std::cout << "  ✓ Loaded: " << name << " (size=" << t.size << ")" << std::endl;
     } else {
         // Initialize with safe defaults
         t.size = expected_size;
         t.data = new float[t.size]();
         if (use_identity) {
-            for (int i = 0; i < t.size; ++i) t.data[i] = 1.0f; // Identity for norm weights
+            for (size_t i = 0; i < t.size; ++i) t.data[i] = 1.0f; // Identity for norm weights
         }
         std::cout << "  ⚠ Missing: " << name << " (initialized with " 
                   << (use_identity ? "identity" : "zeros") << ")" << std::endl;
@@ -93,8 +112,10 @@ void extract_ternary(Tensor& t, const std::string& name, std::unordered_map<std:
     std::string packed_name = name + "_packed";
     std::string size_name = name + "_size";
     if (raw_tensors.find(packed_name) == raw_tensors.end() || raw_tensors[packed_name].data.empty()) {
-        std::cerr << "\n[CRITICAL ERROR] Missing Ternary Layer: " << packed_name << std::endl;
-        exit(1);
+        throw std::runtime_error("Missing ternary layer in binary file: " + packed_name);
+    }
+    if (raw_tensors.find(size_name) == raw_tensors.end()) {
+        throw std::runtime_error("Missing ternary size metadata in binary file: " + size_name);
     }
     int orig_size = raw_tensors[size_name].int_val;
     t.size = orig_size;
@@ -120,18 +141,75 @@ void TLuminaModel::load(const std::string& path) {
             uint32_t len; f.read(reinterpret_cast<char*>(&len), 4);
             tr.data.resize(len); f.read(reinterpret_cast<char*>(tr.data.data()), len);
         } else if (type == 4) {
-            uint32_t len; f.read(reinterpret_cast<char*>(&len), 4);
-            f.read(reinterpret_cast<char*>(&tr.int_val), 4);
+            // Backward-compatible parser:
+            // - old format: [len=4][int32 value]
+            // - some exporters: [int32 value] (no len field)
+            uint32_t first;
+            f.read(reinterpret_cast<char*>(&first), 4);
+            if (first == 4) {
+                f.read(reinterpret_cast<char*>(&tr.int_val), 4);
+            } else {
+                tr.int_val = static_cast<int>(first);
+            }
         } else if (type == 5) { 
-            uint32_t len; f.read(reinterpret_cast<char*>(&len), 4);
-            f.read(reinterpret_cast<char*>(&tr.float_val), 4);
+            // Backward-compatible parser:
+            // - old format: [len=4][float32 value]
+            // - some exporters: [float32 value] (no len field)
+            uint32_t first;
+            f.read(reinterpret_cast<char*>(&first), 4);
+            if (first == 4) {
+                f.read(reinterpret_cast<char*>(&tr.float_val), 4);
+            } else {
+                std::memcpy(&tr.float_val, &first, sizeof(float));
+            }
         }
         raw_tensors[name] = std::move(tr);
     }
     
     std::cout << "✓ Loaded " << raw_tensors.size() << " tensor entries from file\n" << std::endl;
 
-    extract_fp32(embed_w, "model.embed_tokens.weight", raw_tensors);
+    auto resolve_and_extract_fp32 = [&](Tensor& t, const std::vector<std::string>& candidates, size_t expected_size) {
+        std::string found = find_existing_name(raw_tensors, candidates);
+        if (found.empty()) {
+            throw std::runtime_error("Missing layer in binary file. Tried names: " + candidates.front());
+        }
+        if (found != candidates.front()) {
+            std::cout << "  ↪ Alias matched: " << candidates.front() << " <- " << found << std::endl;
+        }
+        extract_fp32(t, found, raw_tensors, expected_size);
+    };
+
+    auto resolve_and_extract_ternary = [&](Tensor& t, const std::vector<std::string>& candidates, float& alpha_out) {
+        std::string found;
+        for (const auto& candidate : candidates) {
+            std::string packed_name = candidate + "_packed";
+            if (raw_tensors.find(packed_name) != raw_tensors.end() && !raw_tensors[packed_name].data.empty()) {
+                found = candidate;
+                break;
+            }
+        }
+        if (found.empty()) {
+            throw std::runtime_error("Missing ternary layer in binary file. Tried names: " + candidates.front() + "_packed");
+        }
+        if (found != candidates.front()) {
+            std::cout << "  ↪ Alias matched: " << candidates.front() << " <- " << found << std::endl;
+        }
+        extract_ternary(t, found, raw_tensors);
+
+        std::string alpha_name = found + "_alpha";
+        if (raw_tensors.find(alpha_name) != raw_tensors.end()) {
+            alpha_out = raw_tensors[alpha_name].float_val;
+        } else {
+            alpha_out = 1.0f;
+            std::cout << "  ⚠ Missing: " << alpha_name << " (using alpha=1.0)" << std::endl;
+        }
+    };
+
+    resolve_and_extract_fp32(embed_w, {
+        "model.embed_tokens.weight",
+        "embed_tokens.weight",
+        "tok_embeddings.weight"
+    }, static_cast<size_t>(vocab_size) * d_model);
     
     // Optional layers with fallback initialization
     extract_fp32_optional(norm_w, "model.norm.weight", d_model, raw_tensors, true);  // Identity for norm
@@ -139,29 +217,75 @@ void TLuminaModel::load(const std::string& path) {
 
     blocks.resize(n_layers);
     for (int i = 0; i < n_layers; ++i) {
-        std::string prefix = "model.layers." + std::to_string(i) + ".";
+        std::string model_prefix = "model.layers." + std::to_string(i) + ".";
+        std::string plain_prefix = "layers." + std::to_string(i) + ".";
         
         // Try to load all layer components, skip if not available
         try {
-            extract_fp32(blocks[i].q_proj, prefix + "self_attn.q_proj.weight", raw_tensors);
-            extract_fp32(blocks[i].k_proj, prefix + "self_attn.k_proj.weight", raw_tensors);
-            extract_fp32(blocks[i].v_proj, prefix + "self_attn.v_proj.weight", raw_tensors);
-            extract_fp32(blocks[i].o_proj, prefix + "self_attn.o_proj.weight", raw_tensors);
+            resolve_and_extract_fp32(blocks[i].q_proj, {
+                model_prefix + "self_attn.q_proj.weight",
+                plain_prefix + "self_attn.q_proj.weight",
+                model_prefix + "attn.q_proj.weight",
+                plain_prefix + "attn.q_proj.weight"
+            }, static_cast<size_t>(d_model) * d_model);
+            resolve_and_extract_fp32(blocks[i].k_proj, {
+                model_prefix + "self_attn.k_proj.weight",
+                plain_prefix + "self_attn.k_proj.weight",
+                model_prefix + "attn.k_proj.weight",
+                plain_prefix + "attn.k_proj.weight"
+            }, static_cast<size_t>(n_kv_heads * head_dim) * d_model);
+            resolve_and_extract_fp32(blocks[i].v_proj, {
+                model_prefix + "self_attn.v_proj.weight",
+                plain_prefix + "self_attn.v_proj.weight",
+                model_prefix + "attn.v_proj.weight",
+                plain_prefix + "attn.v_proj.weight"
+            }, static_cast<size_t>(n_kv_heads * head_dim) * d_model);
+            resolve_and_extract_fp32(blocks[i].o_proj, {
+                model_prefix + "self_attn.o_proj.weight",
+                plain_prefix + "self_attn.o_proj.weight",
+                model_prefix + "attn.o_proj.weight",
+                plain_prefix + "attn.o_proj.weight"
+            }, static_cast<size_t>(d_model) * d_model);
             
-            extract_fp32(blocks[i].norm1_w, prefix + "input_layernorm.weight", raw_tensors);
-            extract_fp32(blocks[i].norm2_w, prefix + "post_attention_layernorm.weight", raw_tensors);
+            resolve_and_extract_fp32(blocks[i].norm1_w, {
+                model_prefix + "input_layernorm.weight",
+                plain_prefix + "input_layernorm.weight",
+                model_prefix + "attention_norm.weight",
+                plain_prefix + "attention_norm.weight",
+                model_prefix + "self_attn_layer_norm.weight",
+                plain_prefix + "self_attn_layer_norm.weight"
+            }, d_model);
+            resolve_and_extract_fp32(blocks[i].norm2_w, {
+                model_prefix + "post_attention_layernorm.weight",
+                plain_prefix + "post_attention_layernorm.weight",
+                model_prefix + "ffn_norm.weight",
+                plain_prefix + "ffn_norm.weight",
+                model_prefix + "mlp_layernorm.weight",
+                plain_prefix + "mlp_layernorm.weight"
+            }, d_model);
 
-            extract_ternary(blocks[i].ffn_gate_w, prefix + "mlp.gate_proj.weight_fp", raw_tensors);
-            extract_ternary(blocks[i].ffn_up_w, prefix + "mlp.up_proj.weight_fp", raw_tensors);
-            extract_ternary(blocks[i].ffn_down_w, prefix + "mlp.down_proj.weight_fp", raw_tensors);
-
-            blocks[i].ffn_gate_alpha = raw_tensors[prefix + "mlp.gate_proj.weight_fp_alpha"].float_val;
-            blocks[i].ffn_up_alpha = raw_tensors[prefix + "mlp.up_proj.weight_fp_alpha"].float_val;
-            blocks[i].ffn_down_alpha = raw_tensors[prefix + "mlp.down_proj.weight_fp_alpha"].float_val;
+            resolve_and_extract_ternary(blocks[i].ffn_gate_w, {
+                model_prefix + "mlp.gate_proj.weight_fp",
+                plain_prefix + "mlp.gate_proj.weight_fp",
+                model_prefix + "ffn.gate.weight_fp",
+                plain_prefix + "ffn.gate.weight_fp"
+            }, blocks[i].ffn_gate_alpha);
+            resolve_and_extract_ternary(blocks[i].ffn_up_w, {
+                model_prefix + "mlp.up_proj.weight_fp",
+                plain_prefix + "mlp.up_proj.weight_fp",
+                model_prefix + "ffn.up.weight_fp",
+                plain_prefix + "ffn.up.weight_fp"
+            }, blocks[i].ffn_up_alpha);
+            resolve_and_extract_ternary(blocks[i].ffn_down_w, {
+                model_prefix + "mlp.down_proj.weight_fp",
+                plain_prefix + "mlp.down_proj.weight_fp",
+                model_prefix + "ffn.down.weight_fp",
+                plain_prefix + "ffn.down.weight_fp"
+            }, blocks[i].ffn_down_alpha);
             
             if (i % 5 == 0) std::cout << "✓ Loaded layer " << i << std::endl;
         } catch (const std::exception& e) {
-            std::cerr << "⚠ Warning: Failed to load layer " << i << ": " << e.what() << std::endl;
+            std::cerr << "⚠ Error loading layer " << i << ": " << e.what() << std::endl;
             throw; // Re-throw to stop loading if layer structure is critical
         }
     }
