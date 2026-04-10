@@ -51,47 +51,39 @@ Running on a standard CPU environment (Single-Threaded):
 T-Lumina has **zero external dependencies**. No PyTorch, No GGML, No ONNX. Just pure C++17.
 
 ### 1. Compile the Inference Engine
-
-`g++ -O3 -march=native -std=c++17 -Wall main.cpp core/model.cpp -o tlumina_inference`
+```bash
+g++ -O3 -march=native -std=c++17 -Wall main.cpp core/model.cpp -o tlumina_inference
+```
 
 ### 2. Run the Engine
+```bash
+./tlumina_inference
+```
+*(Simply type your prompt in the CLI and watch the real-time ternary stream!)*
 
-`./tlumina_inference`
-
-(Simply type your prompt in the CLI and watch the real-time ternary stream!)
+---
 
 ## 📂 Repository Structure
 
-```plaintext
-├── core/
-│   ├── model.h            # Core model architecture, LayerNorm, FP32 Attention
-│   ├── model.cpp
-│   ├── ternary_ffn.h      # Multiplication-free AVX2 SIMD FFN implementation
-│   └── packing.h          # Base-3 to 5-in-8 LUT decoding
-│
-├── scripts/
-│   ├── train.py           # PyTorch training (AMP, fixed causal mask)
-│   └── export_direct.py   # PyTorch → Binary exporter with Alpha scaling
-```
+* `/core/model.h & .cpp`: Core model architecture, LayerNorm, and FP32 Attention.
+* `/core/ternary_ffn.h`: Multiplication-free AVX2 SIMD FFN implementation.
+* `/core/packing.h`: Base-3 to 5-in-8 LUT decoding.
+* `/scripts/train.py`: Supercharged PyTorch training script (AMP, Causal Mask fixed).
+* `/scripts/export_direct.py`: Custom PyTorch -> Binary exporter with Alpha scaling.
+
+---
 
 ## 🛤️ Roadmap
 
-Multi-threading (OpenMP): To scale speed for 1B+ parameter models.
+- [ ] **Multi-threading (OpenMP):** To scale speed for 1B+ parameter models.
+- [ ] **Ternary Attention:** Full Q/K/V quantization for an end-to-end 100% ternary pipeline.
+- [ ] **T-Lumina Video:** Exploring Ternary Diffusion models for ultra-low-cost local video generation.
+- [ ] **Android/iOS JNI Ports:** Running T-Lumina locally on mid-range smartphones.
 
-Ternary Attention: Full Q/K/V quantization for an end-to-end 100% ternary pipeline.
-
-T-Lumina Video: Exploring Ternary Diffusion models for ultra-low-cost local video generation.
-
-Android/iOS JNI Ports: Running T-Lumina locally on mid-range smartphones.
+---
 
 ## 🏆 Author & Copyright
 
-Architecture invented and engineered by:<br>
-© 2026 Abdul Aleem <br>
-8th Grade Student & AI Researcher | Dinajpur, Bangladesh 🇧🇩
-
-This project demonstrates that high-performance AI doesn't require massive GPU clusters. True optimization starts at the mathematical and architectural level.
-
-## 📄 License
-
-This project is licensed under the MIT License. Feel free to use, modify, and distribute, but please attribute the original author.
+**Architecture invented and engineered by:**<br>
+**© 2026 Abdul Aleem** <br>
+*8th Grade Student & AI Researcher | Dinajpur, Bangladesh 🇧🇩*
