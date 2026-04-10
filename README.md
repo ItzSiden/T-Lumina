@@ -61,17 +61,18 @@ T-Lumina has **zero external dependencies**. No PyTorch, No GGML, No ONNX. Just 
 (Simply type your prompt in the CLI and watch the real-time ternary stream!)
 
 ## 📂 Repository Structure
-```bash
-/core/model.h & .cpp: Core model architecture, LayerNorm, and FP32 Attention.
 
-/core/ternary_ffn.h: Multiplication-free AVX2 SIMD FFN implementation.
-
-/core/packing.h: Base-3 to 5-in-8 LUT decoding.
-
-/scripts/train.py: Supercharged PyTorch training script (AMP, Causal Mask fixed).
-
-/scripts/export_direct.py: Custom PyTorch -> Binary exporter with Alpha scaling.
-```bash
+```plaintext
+├── core/
+│   ├── model.h            # Core model architecture, LayerNorm, FP32 Attention
+│   ├── model.cpp
+│   ├── ternary_ffn.h      # Multiplication-free AVX2 SIMD FFN implementation
+│   └── packing.h          # Base-3 to 5-in-8 LUT decoding
+│
+├── scripts/
+│   ├── train.py           # PyTorch training (AMP, fixed causal mask)
+│   └── export_direct.py   # PyTorch → Binary exporter with Alpha scaling
+```
 
 ## 🛤️ Roadmap
 
