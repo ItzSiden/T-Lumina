@@ -51,20 +51,17 @@ Running on a standard CPU environment (Single-Threaded):
 T-Lumina has **zero external dependencies**. No PyTorch, No GGML, No ONNX. Just pure C++17.
 
 ### 1. Compile the Inference Engine
-```bash
-g++ -O3 -march=native -std=c++17 -Wall main.cpp core/model.cpp -o tlumina_inference
-2. Run the Engine
-code
-Bash
-download
-content_copy
-expand_less
-./tlumina_inference
+
+`g++ -O3 -march=native -std=c++17 -Wall main.cpp core/model.cpp -o tlumina_inference`
+
+### 2. Run the Engine
+
+`./tlumina_inference`
 
 (Simply type your prompt in the CLI and watch the real-time ternary stream!)
 
-📂 Repository Structure
-
+## 📂 Repository Structure
+```bash
 /core/model.h & .cpp: Core model architecture, LayerNorm, and FP32 Attention.
 
 /core/ternary_ffn.h: Multiplication-free AVX2 SIMD FFN implementation.
@@ -75,7 +72,7 @@ expand_less
 
 /scripts/export_direct.py: Custom PyTorch -> Binary exporter with Alpha scaling.
 
-🛤️ Roadmap
+## 🛤️ Roadmap
 
 Multi-threading (OpenMP): To scale speed for 1B+ parameter models.
 
@@ -85,7 +82,7 @@ T-Lumina Video: Exploring Ternary Diffusion models for ultra-low-cost local vide
 
 Android/iOS JNI Ports: Running T-Lumina locally on mid-range smartphones.
 
-🏆 Author & Copyright
+## 🏆 Author & Copyright
 
 Architecture invented and engineered by:<br>
 © 2026 Abdul Aleem <br>
@@ -93,6 +90,6 @@ Architecture invented and engineered by:<br>
 
 This project demonstrates that high-performance AI doesn't require massive GPU clusters. True optimization starts at the mathematical and architectural level.
 
-📄 License
+## 📄 License
 
 This project is licensed under the MIT License. Feel free to use, modify, and distribute, but please attribute the original author.
