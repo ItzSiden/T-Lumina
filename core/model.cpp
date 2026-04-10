@@ -33,11 +33,16 @@ void rms_norm(const float* x, float* out, const float* w, int d) {
     for (int i = 0; i < d; ++i) out[i] = x[i] * ss * w[i];
 }
 
-// ⚡ FIX: Direct FP32 memory copy! Zero chance of NaN.
-void extract_fp32(Tensor& t, const TensorRaw& raw) {
+// ⚡ FIXED: 3 Arguments for Safety Checks
+void extract_fp32(Tensor& t, const std::string& name, std::unordered_map<std::string, TensorRaw>& raw_tensors) {
+    if (raw_tensors.find(name) == raw_tensors.end() || raw_tensors[name].data.empty()) {
+        std::cerr << "\n[CRITICAL ERROR] Missing Layer in binary file: " << name << std::endl;
+        exit(1);
+    }
+    const TensorRaw& raw = raw_tensors[name];
     t.size = raw.data.size() / 4; // 4 bytes per float32
-    t.data = new float[t.size];
-    std::memcpy(t.data, raw.data.data(), raw.data.size());
+    t.data = new float[t.size]();
+    std::memcpy(t.data, raw.data.data(), raw.data.size()); // Direct raw copy
 }
 
 void extract_ternary(Tensor& t, const std::string& name, std::unordered_map<std::string, TensorRaw>& raw_tensors) {
