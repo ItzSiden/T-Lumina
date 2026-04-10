@@ -1,87 +1,94 @@
-# 🌟 T-Lumina
+# 🌟 T-Lumina: Ternary-First LLM Architecture
 
-**T-Lumina** is a high-performance, lightweight Large Language Model (LLM) architecture and inference engine written in C++. It is specifically engineered to bring modern AI capabilities to **legacy hardware** (e.g., Intel Core 2 Duo) by utilizing **Ternary Neural Networks (TNNs)**.
+<div align="center">
+  <img src="https://img.shields.io/badge/C%2B%2B-17-blue.svg" alt="C++17">
+  <img src="https://img.shields.io/badge/Optimization-AVX2%20SIMD-success" alt="AVX2">
+  <img src="https://img.shields.io/badge/Dependencies-Zero-brightgreen" alt="Zero Dependencies">
+  <img src="https://img.shields.io/badge/License-MIT-purple.svg" alt="License">
+</div>
 
-By representing weights as $\{-1, 0, 1\}$, T-Lumina replaces expensive floating-point multiplications with simple **Integer Addition and Subtraction**, enabling fast local inference on CPUs without modern AVX-512 or high-end GPUs.
+<br>
 
----
+**T-Lumina** is a breakthrough, high-performance, lightweight Large Language Model (LLM) architecture and inference engine written entirely in pure C++. It is specifically engineered to democratize AI by bringing modern LLM capabilities to **legacy hardware** and edge devices utilizing **Ternary Neural Networks (TNNs)**.
 
-## 🚀 Key Innovations
-
-### 1. 5-in-8 Base-3 Weight Packing
-Conventional ternary models often use 2-bit packing, which wastes bits. T-Lumina uses a custom **5-in-8 packing algorithm** that packs **5 ternary weights into a single 8-bit byte** using Base-3 encoding.
-* **Efficiency:** Reduces memory footprint by **~80%** compared to FP16.
-* **Performance:** Utilizes a pre-computed Look-Up Table (LUT) for O(1) unpacking.
-
-### 2. Addition-Only FFN Kernels (SIMD Optimized)
-The Feed-Forward Network (FFN) eliminates traditional matrix multiplications (MatMul).
-* **AVX2/SSE Optimization:** Uses hardware-level SIMD instructions to perform parallel additions/subtractions.
-* **Hardware Democratization:** Designed to run smoothly on systems with low RAM and less powerfull processors.
-
-### 3. Progressive Training Pipeline
-T-Lumina is trained using a progressive quantization approach:
-* Starts at **8-bit (INT8)** to stabilize features.
-* Decays to **4-bit**.
-* Finalizes at **1.58-bit Ternary** to ensure minimum perplexity loss while maximizing speed.
+By representing Feed-Forward Network (FFN) weights strictly as $\{-1, 0, 1\}$, T-Lumina replaces expensive floating-point matrix multiplications with highly optimized, branchless **Integer Addition and Subtraction**. 
 
 ---
 
-## 🛠️ Technical Specifications
+## 🚀 Architectural Innovations
 
-| Feature | Specification |
+### 1. Multiplication-Free AVX2 Kernels
+The core Feed-Forward Network (accounting for ~70% of LLM parameters) eliminates standard MatMul operations. T-Lumina utilizes custom **AVX2/SSE SIMD instructions** to perform parallel additions and subtractions via bitmasking, achieving blistering inference speeds on pure CPU.
+
+### 2. Custom 5-in-8 Base-3 Weight Packing
+Standard 2-bit quantization wastes memory limits. T-Lumina introduces a mathematically rigorous **Base-3 packing algorithm** that compresses **5 ternary weights into a single 8-bit byte (uint8)**. 
+* **Compression:** Reduces FFN memory footprint by **~80%** compared to standard FP16.
+* **O(1) Unpacking:** Uses a pre-computed C++ Look-Up Table (LUT) for instantaneous runtime unrolling into CPU cache.
+
+### 3. Progressive Bit-Annealing Training
+T-Lumina models are trained in PyTorch using a progressive quantization schedule:
+1. **INT8 (0-15k steps):** Stabilizes feature extraction.
+2. **4-bit (15k-30k steps):** Forces network to learn robust intermediate representations.
+3. **1.58-bit Ternary (30k+ steps):** Finalizes at $\{-1, 0, 1\}$ + $\alpha$ scaling, minimizing perplexity loss.
+
+---
+
+## 📊 Live Benchmark (Storyteller-34M)
+
+Running on a standard CPU environment (Single-Threaded):
+
+| Metric | Result |
 | :--- | :--- |
-| **Architecture** | Transformer-based (Decoder only) |
-| **Bit-width** | 1.58-bit (Ternary weights) |
-| **Parameters** | 34.2M (Storyteller Baseline) |
-| **Engine** | Pure C++ (Zero Dependencies) |
-| **Optimizations** | AVX2, SSE, Custom 5-in-8 Packing |
-| **Target Data** | TinyStories / General Knowledge |
+| **Parameters** | 34.2 Million |
+| **Generation Speed** | **~106.47 tokens/sec** ⚡ |
+| **RAM Usage** | **224.68 MB** |
+| **Weight Quantization**| FFN: 1.58-bit (Ternary) \| Attn/Norm: FP32 |
 
 ---
 
 ## 💻 Installation & Compilation
 
-Since T-Lumina has **zero external dependencies**, you only need a C++ compiler supporting C++17.
+T-Lumina has **zero external dependencies**. No PyTorch, No GGML, No ONNX. Just pure C++17.
 
-### Compile the Inference Engine:
+### 1. Compile the Inference Engine
 ```bash
-g++ -O3 -mavx2 -std=c++17 main.cpp core/model.cpp -o tlumina_inference
-````
+g++ -O3 -march=native -std=c++17 -Wall main.cpp core/model.cpp -o tlumina_inference
+```
 
-### Run the Model:
-
+### 2. Run the Engine
 ```bash
 ./tlumina_inference
 ```
+*(Simply type your prompt in the CLI and watch the real-time ternary stream!)*
 
------
+---
 
-## 📂 Project Structure
+## 📂 Repository Structure
 
-  * `/core`: Contains the C++ engine (Tensors, KV-Cache, SIMD Kernels).
-  * `/scripts`: Python scripts for training (`train.py`) and 5-in-8 packing.
-  * `tokenizer.h`: Custom BPE-based tokenizer interface.
-  * `packing.h`: Implementation of the Base-3 unpacking logic.
+* `/core/model.h & .cpp`: Core model architecture, LayerNorm, and FP32 Attention.
+* `/core/ternary_ffn.h`: Multiplication-free AVX2 SIMD FFN implementation.
+* `/core/packing.h`: Base-3 to 5-in-8 LUT decoding.
+* `/scripts/train.py`: Supercharged PyTorch training script (AMP, Causal Mask fixed).
+* `/scripts/export_direct.py`: Custom PyTorch -> Binary exporter with Alpha scaling.
 
------
+---
 
 ## 🛤️ Roadmap
 
-  - [ ] Implement Ternary Attention (Q/K/V quantization).
-  - [ ] Support for larger 1B+ Parameter models.
-  - [ ] **T-Lumina Video:** Exploring Ternary Diffusion for low-cost video generation.
-  - [ ] Mobile-optimized Android/iOS builds.
-
------
-
-Created by **Abdul Aleem**, an independent researcher and software developer from Bangladesh.
-
------
-
-## 📄 License
-
-This project is licensed under the **MIT License** - see the [LICENSE](https://www.google.com/search?q=LICENSE) file for details.
-
-```
+- [ ] **Multi-threading (OpenMP):** To scale speed for 1B+ parameter models.
+- [ ] **Ternary Attention:** Full Q/K/V quantization for an end-to-end 100% ternary pipeline.
+- [ ] **T-Lumina Video:** Exploring Ternary Diffusion models for ultra-low-cost local video generation.
+- [ ] **Android/iOS JNI Ports:** Running T-Lumina locally on mid-range smartphones.
 
 ---
+
+## 🏆 Author & Copyright
+
+**Architecture invented and engineered by:**<br>
+**© 2026 Abdul Aleem** <br>
+*Student & AI Researcher | Dinajpur, Bangladesh*
+
+---
+
+## 📄 License
+This project is licensed under the MIT License. Feel free to use, modify, and distribute, but please attribute the original author.
