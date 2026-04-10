@@ -30,11 +30,35 @@ void layer_norm(const float* x, float* out, const float* w, const float* b, int 
     for (int i = 0; i < d; ++i) out[i] = (x[i] - mean) * inv_std * w[i] + b[i];
 }
 
-// ⚡ FIX: Direct FP32 memory copy! Zero chance of NaN.
+// ⚡ 100% Safe IEEE-754 Compliant FP16 to FP32 Decoder
+inline float fp16_to_fp32(uint16_t x) {
+    uint32_t e = (x >> 10) & 0x1f;
+    uint32_t m = x & 0x3ff;
+    uint32_t v = (uint32_t)(x & 0x8000) << 16;
+    if (e == 0) {
+        if (m != 0) { // denormalized
+            while ((m & 0x400) == 0) { m <<= 1; e--; }
+            e++; m &= ~0x400;
+            v |= ((e + 112) << 23) | (m << 13);
+        }
+    } else if (e == 31) { // inf/nan
+        v |= 0x7f800000 | (m << 13);
+    } else { // normalized
+        v |= ((e + 112) << 23) | (m << 13);
+    }
+    float f;
+    std::memcpy(&f, &v, 4);
+    return f;
+}
+
 void extract_fp32(Tensor& t, const TensorRaw& raw) {
-    t.size = raw.data.size() / 4; // 4 bytes per float32
+    t.size = raw.data.size() / 2; // 2 bytes per float16
     t.data = new float[t.size];
-    std::memcpy(t.data, raw.data.data(), raw.data.size());
+    for (size_t i = 0; i < t.size; ++i) {
+        uint16_t h;
+        std::memcpy(&h, &raw.data[i * 2], 2);
+        t.data[i] = fp16_to_fp32(h);
+    }
 }
 
 void extract_ternary(Tensor& t, const TensorRaw& raw_packed, int orig_size) {
