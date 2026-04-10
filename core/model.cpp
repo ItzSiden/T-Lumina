@@ -9,38 +9,53 @@
 
 TLuminaModel::TLuminaModel() {
     head_dim = d_model / n_heads;
-    for (int i = 0; i < n_layers; ++i) kv_caches.push_back(std::make_unique<LayerKVCache>(max_len, d_model));
-    hidden = new float[d_model]; hidden_norm = new float[d_model];
-    qkv_buf = new float[3 * d_model]; att_scores = new float[max_len];
-    ffn_gate_buf = new float[d_ffn]; ffn_up_buf = new float[d_ffn]; logits = new float[vocab_size];
+    int kv_dim = n_kv_heads * head_dim; 
+    
+    for (int i = 0; i < n_layers; ++i) kv_caches.push_back(std::make_unique<LayerKVCache>(max_len, kv_dim));
+    
+    hidden = new float[d_model](); hidden_norm = new float[d_model]();
+    q_buf = new float[d_model](); k_buf = new float[kv_dim](); v_buf = new float[kv_dim]();
+    att_scores = new float[max_len]();
+    ffn_gate_buf = new float[d_ffn](); ffn_up_buf = new float[d_ffn](); logits = new float[vocab_size]();
 }
 
 TLuminaModel::~TLuminaModel() {
-    delete[] hidden; delete[] hidden_norm; delete[] qkv_buf;
+    delete[] hidden; delete[] hidden_norm; delete[] q_buf; delete[] k_buf; delete[] v_buf;
     delete[] att_scores; delete[] ffn_gate_buf; delete[] ffn_up_buf; delete[] logits;
 }
 
-void layer_norm(const float* x, float* out, const float* w, const float* b, int d) {
-    float mean = 0, var = 0;
-    for (int i = 0; i < d; ++i) mean += x[i];
-    mean /= d;
-    for (int i = 0; i < d; ++i) var += (x[i] - mean) * (x[i] - mean);
-    var /= d;
-    float inv_std = 1.0f / std::sqrt(var + 1e-5f);
-    for (int i = 0; i < d; ++i) out[i] = (x[i] - mean) * inv_std * w[i] + b[i];
+void rms_norm(const float* x, float* out, const float* w, int d) {
+    float ss = 0.0f;
+    for (int i = 0; i < d; ++i) ss += x[i] * x[i];
+    ss /= d;
+    ss += 1e-5f;
+    ss = 1.0f / std::sqrt(ss);
+    for (int i = 0; i < d; ++i) out[i] = x[i] * ss * w[i];
 }
 
-// ⚡ FIX: Direct FP32 memory copy! Zero chance of NaN.
-void extract_fp32(Tensor& t, const TensorRaw& raw) {
+// ⚡ FIXED: Direct FP32 reading, NO CONVERSION AT ALL! 
+void extract_fp32(Tensor& t, const std::string& name, std::unordered_map<std::string, TensorRaw>& raw_tensors) {
+    if (raw_tensors.find(name) == raw_tensors.end() || raw_tensors[name].data.empty()) {
+        std::cerr << "\n[CRITICAL ERROR] Missing Layer in binary file: " << name << std::endl;
+        exit(1);
+    }
+    const TensorRaw& raw = raw_tensors[name];
     t.size = raw.data.size() / 4; // 4 bytes per float32
-    t.data = new float[t.size];
-    std::memcpy(t.data, raw.data.data(), raw.data.size());
+    t.data = new float[t.size]();
+    std::memcpy(t.data, raw.data.data(), raw.data.size()); // Direct raw copy to memory
 }
 
-void extract_ternary(Tensor& t, const TensorRaw& raw_packed, int orig_size) {
+void extract_ternary(Tensor& t, const std::string& name, std::unordered_map<std::string, TensorRaw>& raw_tensors) {
+    std::string packed_name = name + "_packed";
+    std::string size_name = name + "_size";
+    if (raw_tensors.find(packed_name) == raw_tensors.end() || raw_tensors[packed_name].data.empty()) {
+        std::cerr << "\n[CRITICAL ERROR] Missing Ternary Layer: " << packed_name << std::endl;
+        exit(1);
+    }
+    int orig_size = raw_tensors[size_name].int_val;
     t.size = orig_size;
-    t.data_i8 = new int8_t[orig_size];
-    unpack_5in8(raw_packed.data.data(), t.data_i8, orig_size);
+    t.data_i8 = new int8_t[orig_size]();
+    unpack_5in8(raw_tensors[packed_name].data.data(), t.data_i8, orig_size);
 }
 
 void TLuminaModel::load(const std::string& path) {
@@ -67,56 +82,59 @@ void TLuminaModel::load(const std::string& path) {
         raw_tensors[name] = std::move(tr);
     }
 
-    extract_fp32(embed_w, raw_tensors["embed.weight"]);
-    extract_fp32(pos_emb, raw_tensors["pos_emb"]);
-    extract_fp32(norm_w, raw_tensors["norm.weight"]);
-    extract_fp32(norm_b, raw_tensors["norm.bias"]);
-    extract_fp32(head_w, raw_tensors["head.weight"]);
+    extract_fp32(embed_w, "model.embed_tokens.weight", raw_tensors);
+    extract_fp32(norm_w, "model.norm.weight", raw_tensors);
+    extract_fp32(head_w, "lm_head.weight", raw_tensors);
 
     blocks.resize(n_layers);
     for (int i = 0; i < n_layers; ++i) {
-        std::string prefix = "blocks." + std::to_string(i) + ".";
+        std::string prefix = "model.layers." + std::to_string(i) + ".";
         
-        extract_fp32(blocks[i].attn_in_w, raw_tensors[prefix + "attn.in_proj_weight"]);
-        extract_fp32(blocks[i].attn_in_b, raw_tensors[prefix + "attn.in_proj_bias"]);
-        extract_fp32(blocks[i].attn_out_w, raw_tensors[prefix + "attn.out_proj.weight"]);
-        extract_fp32(blocks[i].attn_out_b, raw_tensors[prefix + "attn.out_proj.bias"]);
+        extract_fp32(blocks[i].q_proj, prefix + "self_attn.q_proj.weight", raw_tensors);
+        extract_fp32(blocks[i].k_proj, prefix + "self_attn.k_proj.weight", raw_tensors);
+        extract_fp32(blocks[i].v_proj, prefix + "self_attn.v_proj.weight", raw_tensors);
+        extract_fp32(blocks[i].o_proj, prefix + "self_attn.o_proj.weight", raw_tensors);
         
-        extract_fp32(blocks[i].norm1_w, raw_tensors[prefix + "norm1.weight"]);
-        extract_fp32(blocks[i].norm1_b, raw_tensors[prefix + "norm1.bias"]);
-        extract_fp32(blocks[i].norm2_w, raw_tensors[prefix + "norm2.weight"]);
-        extract_fp32(blocks[i].norm2_b, raw_tensors[prefix + "norm2.bias"]);
+        extract_fp32(blocks[i].norm1_w, prefix + "input_layernorm.weight", raw_tensors);
+        extract_fp32(blocks[i].norm2_w, prefix + "post_attention_layernorm.weight", raw_tensors);
 
-        extract_ternary(blocks[i].ffn_gate_w, raw_tensors[prefix + "ffn.gate.weight_fp_packed"], raw_tensors[prefix + "ffn.gate.weight_fp_size"].int_val);
-        extract_ternary(blocks[i].ffn_up_w, raw_tensors[prefix + "ffn.up.weight_fp_packed"], raw_tensors[prefix + "ffn.up.weight_fp_size"].int_val);
-        extract_ternary(blocks[i].ffn_down_w, raw_tensors[prefix + "ffn.down.weight_fp_packed"], raw_tensors[prefix + "ffn.down.weight_fp_size"].int_val);
+        extract_ternary(blocks[i].ffn_gate_w, prefix + "mlp.gate_proj.weight_fp", raw_tensors);
+        extract_ternary(blocks[i].ffn_up_w, prefix + "mlp.up_proj.weight_fp", raw_tensors);
+        extract_ternary(blocks[i].ffn_down_w, prefix + "mlp.down_proj.weight_fp", raw_tensors);
 
-        blocks[i].ffn_gate_alpha = raw_tensors[prefix + "ffn.gate.weight_fp_alpha"].float_val;
-        blocks[i].ffn_up_alpha = raw_tensors[prefix + "ffn.up.weight_fp_alpha"].float_val;
-        blocks[i].ffn_down_alpha = raw_tensors[prefix + "ffn.down.weight_fp_alpha"].float_val;
+        blocks[i].ffn_gate_alpha = raw_tensors[prefix + "mlp.gate_proj.weight_fp_alpha"].float_val;
+        blocks[i].ffn_up_alpha = raw_tensors[prefix + "mlp.up_proj.weight_fp_alpha"].float_val;
+        blocks[i].ffn_down_alpha = raw_tensors[prefix + "mlp.down_proj.weight_fp_alpha"].float_val;
     }
 }
 
 float* TLuminaModel::forward(int token, int pos) {
+    if (token < 0 || token >= vocab_size) return logits; // Safe bound check
+
     const float* emb_row = embed_w.data + token * d_model;
-    const float* pos_row = pos_emb.data + pos * d_model;
-    
-    for (int i = 0; i < d_model; ++i) hidden[i] = emb_row[i] + pos_row[i];
+    for (int i = 0; i < d_model; ++i) hidden[i] = emb_row[i];
+
     float scale_attn = 1.0f / std::sqrt(static_cast<float>(head_dim));
+    int kv_dim = n_kv_heads * head_dim;
 
     for (int l = 0; l < n_layers; ++l) {
-        fp32_matmul(hidden, blocks[l].attn_in_w.data, qkv_buf, 3 * d_model, d_model);
-        for(int i = 0; i < 3 * d_model; ++i) qkv_buf[i] += blocks[l].attn_in_b.data[i];
+        rms_norm(hidden, hidden_norm, blocks[l].norm1_w.data, d_model);
 
-        float* q = qkv_buf; float* k = qkv_buf + d_model; float* v = qkv_buf + 2 * d_model;
-        kv_caches[l]->update_cache(pos, k, v);
+        fp32_matmul(hidden_norm, blocks[l].q_proj.data, q_buf, d_model, d_model);
+        fp32_matmul(hidden_norm, blocks[l].k_proj.data, k_buf, kv_dim, d_model);
+        fp32_matmul(hidden_norm, blocks[l].v_proj.data, v_buf, kv_dim, d_model);
 
-        float out_attn[256] = {0}; 
+        apply_rope(q_buf, k_buf, pos, head_dim, n_heads, n_kv_heads);
+        kv_caches[l]->update_cache(pos, k_buf, v_buf);
+
+        float out_attn[2048] = {0}; 
         for (int h = 0; h < n_heads; ++h) {
-            float* q_h = q + h * head_dim;
+            float* q_h = q_buf + h * head_dim;
+            int kv_h = h / (n_heads / n_kv_heads);
+            
             float max_score = -1e9f;
             for (int p = 0; p <= pos; ++p) {
-                int8_t* k_cached = kv_caches[l]->k_cache + p * d_model + h * head_dim;
+                int8_t* k_cached = kv_caches[l]->k_cache + p * kv_dim + kv_h * head_dim;
                 float score = quantized_dot_product(q_h, k_cached, kv_caches[l]->k_scales[p], head_dim) * scale_attn;
                 att_scores[p] = score;
                 if (score > max_score) max_score = score;
@@ -131,33 +149,30 @@ float* TLuminaModel::forward(int token, int pos) {
 
             for (int p = 0; p <= pos; ++p) {
                 float score = att_scores[p];
-                int8_t* v_cached = kv_caches[l]->v_cache + p * d_model + h * head_dim;
+                int8_t* v_cached = kv_caches[l]->v_cache + p * kv_dim + kv_h * head_dim;
                 float v_scale = kv_caches[l]->v_scales[p];
                 for (int i = 0; i < head_dim; ++i) out_attn[h * head_dim + i] += score * v_cached[i] * v_scale;
             }
         }
 
-        float attn_proj_out[256];
-        fp32_matmul(out_attn, blocks[l].attn_out_w.data, attn_proj_out, d_model, d_model);
-        
-        for (int i = 0; i < d_model; ++i) hidden[i] += attn_proj_out[i] + blocks[l].attn_out_b.data[i];
-        layer_norm(hidden, hidden_norm, blocks[l].norm1_w.data, blocks[l].norm1_b.data, d_model);
-        for (int i = 0; i < d_model; ++i) hidden[i] = hidden_norm[i];
+        float attn_proj_out[2048] = {0};
+        fp32_matmul(out_attn, blocks[l].o_proj.data, attn_proj_out, d_model, d_model);
+        for (int i = 0; i < d_model; ++i) hidden[i] += attn_proj_out[i];
 
-        ternary_matmul_avx2(hidden, blocks[l].ffn_gate_w.data_i8, ffn_gate_buf, d_ffn, d_model, blocks[l].ffn_gate_alpha);
-        ternary_matmul_avx2(hidden, blocks[l].ffn_up_w.data_i8, ffn_up_buf, d_ffn, d_model, blocks[l].ffn_up_alpha);
+        rms_norm(hidden, hidden_norm, blocks[l].norm2_w.data, d_model);
+
+        ternary_matmul_avx2(hidden_norm, blocks[l].ffn_gate_w.data_i8, ffn_gate_buf, d_ffn, d_model, blocks[l].ffn_gate_alpha);
+        ternary_matmul_avx2(hidden_norm, blocks[l].ffn_up_w.data_i8, ffn_up_buf, d_ffn, d_model, blocks[l].ffn_up_alpha);
 
         for (int i = 0; i < d_ffn; ++i) ffn_gate_buf[i] = silu(ffn_gate_buf[i]) * ffn_up_buf[i];
 
-        float ffn_down_out[256]; 
+        float ffn_down_out[2048] = {0}; 
         ternary_matmul_avx2(ffn_gate_buf, blocks[l].ffn_down_w.data_i8, ffn_down_out, d_model, d_ffn, blocks[l].ffn_down_alpha);
 
         for (int i = 0; i < d_model; ++i) hidden[i] += ffn_down_out[i];
-        layer_norm(hidden, hidden_norm, blocks[l].norm2_w.data, blocks[l].norm2_b.data, d_model);
-        for (int i = 0; i < d_model; ++i) hidden[i] = hidden_norm[i];
     }
 
-    layer_norm(hidden, hidden_norm, norm_w.data, norm_b.data, d_model);
+    rms_norm(hidden, hidden_norm, norm_w.data, d_model);
     fp32_matmul(hidden_norm, head_w.data, logits, vocab_size, d_model);
     
     return logits;

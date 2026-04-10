@@ -3,6 +3,30 @@
 #include <immintrin.h>
 #include "kv_cache.h"
 
+// ⚡ FIXED: HuggingFace Llama Exact RoPE Implementation
+inline void apply_rope(float* q, float* k, int pos, int head_dim, int n_heads, int n_kv_heads) {
+    int half_dim = head_dim / 2;
+    for (int i = 0; i < half_dim; ++i) {
+        float freq = 1.0f / std::pow(10000.0f, (float)(2 * i) / head_dim);
+        float val = pos * freq;
+        float cos_val = std::cos(val);
+        float sin_val = std::sin(val);
+        
+        for (int h = 0; h < n_heads; ++h) {
+            float q0 = q[h * head_dim + i];
+            float q1 = q[h * head_dim + i + half_dim];
+            q[h * head_dim + i] = q0 * cos_val - q1 * sin_val;
+            q[h * head_dim + i + half_dim] = q0 * sin_val + q1 * cos_val;
+        }
+        for (int h = 0; h < n_kv_heads; ++h) {
+            float k0 = k[h * head_dim + i];
+            float k1 = k[h * head_dim + i + half_dim];
+            k[h * head_dim + i] = k0 * cos_val - k1 * sin_val;
+            k[h * head_dim + i + half_dim] = k0 * sin_val + k1 * cos_val;
+        }
+    }
+}
+
 inline void fp32_matmul(const float* x, const float* W, float* y, int M, int N) {
     for (int i = 0; i < M; ++i) {
         float sum = 0.0f;
