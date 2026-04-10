@@ -71,6 +71,7 @@ T-Lumina has **zero external dependencies**. No PyTorch, No GGML, No ONNX. Just 
 /scripts/train.py: Supercharged PyTorch training script (AMP, Causal Mask fixed).
 
 /scripts/export_direct.py: Custom PyTorch -> Binary exporter with Alpha scaling.
+```bash
 
 ## 🛤️ Roadmap
 
