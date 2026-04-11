@@ -3,6 +3,31 @@
 #include <immintrin.h>
 #include "kv_cache.h"
 
+// ⚡ T-Lumina v2 RoPE (Adjacent Pair Rotation)
+inline void apply_rope(float* q, float* k, int pos, int head_dim, int n_heads) {
+    for (int i = 0; i < head_dim; i += 2) {
+        float freq = 1.0f / std::pow(10000.0f, (float)i / head_dim);
+        float val = pos * freq;
+        float cos_val = std::cos(val);
+        float sin_val = std::sin(val);
+        
+        for (int h = 0; h < n_heads; ++h) {
+            int idx0 = h * head_dim + i;
+            int idx1 = h * head_dim + i + 1;
+            
+            float q0 = q[idx0];
+            float q1 = q[idx1];
+            q[idx0] = q0 * cos_val - q1 * sin_val;
+            q[idx1] = q0 * sin_val + q1 * cos_val;
+            
+            float k0 = k[idx0];
+            float k1 = k[idx1];
+            k[idx0] = k0 * cos_val - k1 * sin_val;
+            k[idx1] = k0 * sin_val + k1 * cos_val;
+        }
+    }
+}
+
 inline void fp32_matmul(const float* x, const float* W, float* y, int M, int N) {
     for (int i = 0; i < M; ++i) {
         float sum = 0.0f;
