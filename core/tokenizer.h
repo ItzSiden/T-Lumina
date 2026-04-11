@@ -6,81 +6,66 @@
 #include <iostream>
 #include <algorithm>
 
-// -------------------------------------------------------
-// SentencePiece-style BPE tokenizer
-// Reads vocab.bin (same directory as the binary)
-// Format: repeated  [ uint32 length | utf8 bytes ]
-// -------------------------------------------------------
 class Tokenizer {
 public:
-    static constexpr int BOS = 1;
-    static constexpr int EOS = 2;
+    int bos_token = 50256;
+    int eos_token = 50256;
+    std::vector<std::string> id_to_token;
+    std::unordered_map<std::string, int> token_to_id;
 
-    // Keep old names for main.cpp compat
-    int bos_token = BOS;
-    int eos_token = EOS;
-
-    std::vector<std::string>          id_to_token;
-    std::unordered_map<std::string,int> token_to_id;
-
-    explicit Tokenizer(const std::string& vocab_path = "vocab.bin") {
-        std::ifstream f(vocab_path, std::ios::binary);
+    Tokenizer() {
+        std::ifstream f("vocab.bin", std::ios::binary);
         if (!f) {
-            std::cerr << "[Tokenizer] Warning: '" << vocab_path << "' not found.\n";
+            std::cerr << "Warning: 'vocab.bin' not found! Run export_vocab.py first." << std::endl;
             return;
         }
+
         uint32_t len;
+        int id = 0;
         while (f.read(reinterpret_cast<char*>(&len), 4)) {
-            std::string s(len, '\0');
+            std::string s(len, ' ');
             if (len > 0) f.read(&s[0], len);
-            int id = static_cast<int>(id_to_token.size());
             id_to_token.push_back(s);
-            token_to_id.emplace(s, id);
+            
+            // Map string to ID. Avoid overwriting earlier tokens (prefer lower IDs for common words)
+            if (token_to_id.find(s) == token_to_id.end()) {
+                token_to_id[s] = id;
+            }
+            id++;
         }
-        std::cout << "[Tokenizer] Loaded " << id_to_token.size() << " tokens.\n";
     }
 
-    // Encode: greedy longest-match BPE with Llama '▁' space convention
-    std::vector<int> encode(const std::string& text) const {
-        // Prepend leading space marker as Llama SentencePiece does
-        static const std::string SPACE_SYM = "\xe2\x96\x81";
-        std::string processed = SPACE_SYM;
-        for (char c : text)
-            processed += (c == ' ') ? SPACE_SYM : std::string(1, c);
-
+    // Encoding: Greedy Longest-Prefix Match (Fast and effective for English)
+    std::vector<int> encode(const std::string& text) {
         std::vector<int> ids;
         size_t pos = 0;
-        while (pos < processed.size()) {
-            size_t best_len = 0;
-            int    best_id  = -1;
-            size_t max_try  = std::min(processed.size() - pos, (size_t)32);
-            for (size_t len = max_try; len > 0; --len) {
-                auto it = token_to_id.find(processed.substr(pos, len));
+        
+        while (pos < text.length()) {
+            bool matched = false;
+            // Max GPT-2 token length is rarely above 32 chars
+            size_t max_len = std::min(text.length() - pos, (size_t)32); 
+            
+            for (size_t len = max_len; len > 0; --len) {
+                std::string sub = text.substr(pos, len);
+                auto it = token_to_id.find(sub);
                 if (it != token_to_id.end()) {
-                    best_len = len;
-                    best_id  = it->second;
+                    ids.push_back(it->second);
+                    pos += len;
+                    matched = true;
                     break;
                 }
             }
-            if (best_id >= 0) {
-                ids.push_back(best_id);
-                pos += best_len;
-            } else {
-                pos++;  // skip unknown byte
-            }
+            // Fallback (should theoretically never happen as GPT2 has byte-level coverage)
+            if (!matched) pos++; 
         }
         return ids;
     }
-
-    // Decode: convert '▁' back to space
-    std::string decode(int id) const {
-        if (id == EOS || id < 0 || id >= static_cast<int>(id_to_token.size()))
+    
+    // Decoding: Convert IDs back to words perfectly
+    std::string decode(int id) {
+        if (id == eos_token || id < 0 || id >= static_cast<int>(id_to_token.size())) {
             return "";
-        std::string word = id_to_token[id];
-        static const std::string SPACE_SYM = "\xe2\x96\x81";
-        size_t p;
-        while ((p = word.find(SPACE_SYM)) != std::string::npos)
-            word.replace(p, 3, " ");
-        return word;
+        }
+        return id_to_token[id];
     }
 };

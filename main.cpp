@@ -5,163 +5,153 @@
 #include <random>
 #include <chrono>
 #include <iomanip>
-#include <cmath>
-#include <sys/resource.h>
+#include <sys/resource.h> // For RAM usage on Linux/Codespaces
 #include "core/model.h"
 #include "core/tokenizer.h"
 
-// -------------------------------------------------------
-// RAM usage helper (Linux)
-// -------------------------------------------------------
-static double ram_mb() {
-    struct rusage r; getrusage(RUSAGE_SELF, &r);
-    return r.ru_maxrss / 1024.0;
+// Function to get current RAM usage in MB
+double get_ram_usage_mb() {
+    struct rusage r_usage;
+    getrusage(RUSAGE_SELF, &r_usage);
+    // ru_maxrss is in kilobytes on Linux
+    return r_usage.ru_maxrss / 1024.0;
 }
 
-// -------------------------------------------------------
-// Top-p (nucleus) sampling with temperature
-// Returns a token id, or EOS (2) on NaN/Inf.
-// -------------------------------------------------------
-static int sample_top_p(float* logits, int size, float temp, float top_p) {
-    // NaN / Inf guard
+int sample_top_p(float* logits, int size, float temp, float top_p) {
+    for (int i = 0; i < size; ++i) logits[i] /= temp;
+
+    float max_l = logits[0];
+    for (int i = 1; i < size; ++i) max_l = std::max(max_l, logits[i]);
+
+    float sum_exp = 0.0f;
     for (int i = 0; i < size; ++i) {
-        if (!std::isfinite(logits[i])) {
-            std::cerr << "\n[WARN] Non-finite logit detected — returning EOS.\n";
-            return Tokenizer::EOS;
-        }
-        logits[i] /= temp;
+        logits[i] = std::exp(logits[i] - max_l);
+        sum_exp += logits[i];
     }
+    for (int i = 0; i < size; ++i) logits[i] /= sum_exp;
 
-    // Softmax (numerically stable)
-    float max_l = *std::max_element(logits, logits + size);
-    float sum_e = 0.0f;
-    for (int i = 0; i < size; ++i) { logits[i] = std::exp(logits[i] - max_l); sum_e += logits[i]; }
-    for (int i = 0; i < size; ++i) logits[i] /= sum_e;
-
-    // Sort descending
-    static std::vector<std::pair<float,int>> probs;
-    probs.resize(size);
+    std::vector<std::pair<float, int>> probs(size);
     for (int i = 0; i < size; ++i) probs[i] = {logits[i], i};
-    std::sort(probs.begin(), probs.end(),
-              [](const auto& a, const auto& b){ return a.first > b.first; });
 
-    // Nucleus truncation
-    float cum = 0.0f;
-    int   cut = 0;
-    for (; cut < size; ++cut) {
-        cum += probs[cut].first;
-        if (cum >= top_p) { ++cut; break; }
+    std::sort(probs.begin(), probs.end(), [](auto& a, auto& b) { return a.first > b.first; });
+
+    float cumulative = 0.0f;
+    std::vector<std::pair<float, int>> filtered;
+    for (auto& p : probs) {
+        filtered.push_back(p);
+        cumulative += p.first;
+        if (cumulative > top_p) break;
     }
-    if (cut == 0) cut = 1;
 
-    // Re-normalise nucleus
-    float nsum = 0.0f;
-    for (int i = 0; i < cut; ++i) nsum += probs[i].first;
+    float filtered_sum = 0.0f;
+    for (auto& p : filtered) filtered_sum += p.first;
 
-    std::mt19937& rng = []() -> std::mt19937& {
-        static std::mt19937 g(std::random_device{}());
-        return g;
-    }();
-    std::uniform_real_distribution<float> dis(0.0f, nsum);
-    float r = dis(rng), acc = 0.0f;
-    for (int i = 0; i < cut; ++i) {
-        acc += probs[i].first;
-        if (acc >= r) return probs[i].second;
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_real_distribution<float> dis(0.0f, 1.0f);
+    float r = dis(gen) * filtered_sum;
+
+    float acc = 0.0f;
+    for (auto& p : filtered) {
+        acc += p.first;
+        if (acc >= r) return p.second;
     }
-    return probs[cut - 1].second;
+    return filtered.back().second;
 }
 
-// -------------------------------------------------------
-// main
-// -------------------------------------------------------
-int main(int argc, char* argv[]) {
-    std::string model_path = "tlumina_model.bin";
-    if (argc > 1) model_path = argv[1];
+int main() {
+    std::cout << "\033[1;36m====================================================\033[0m\n";
+    std::cout << "\033[1;33mT-LUMINA INFERENCE ENGINE (Ternary-First LLM)\033[0m\n";
+    std::cout << "\033[1;32mArchitecture by (C) Abdul Aleem, Dinajpur, Bangladesh\033[0m\n";
+    std::cout << "\033[1;36m====================================================\033[0m\n\n";
 
-    std::cout << "\033[1;36m====================================================\033[0m\n"
-              << "\033[1;33m  T-LUMINA INFERENCE ENGINE  (Ternary-First LLM)\033[0m\n"
-              << "\033[1;32m  Architecture: Abdul Aleem, Dinajpur, Bangladesh\033[0m\n"
-              << "\033[1;36m====================================================\033[0m\n\n";
-
-    std::cout << "Loading model from: " << model_path << " ..." << std::flush;
+    std::cout << "Loading T-Lumina Model..." << std::flush;
     TLuminaModel model;
+    
     try {
-        model.load(model_path);
-        std::cout << " \033[1;32m[OK]\033[0m  RAM: "
-                  << std::fixed << std::setprecision(1) << ram_mb() << " MB\n";
-    } catch (const std::exception& e) {
-        std::cerr << "\n\033[1;31m[LOAD ERROR] " << e.what() << "\033[0m\n";
+        model.load("tlumina_model.bin");
+        std::cout << " \033[1;32m[OK]\033[0m\n";
+        std::cout << "RAM Usage after load: " << std::fixed << std::setprecision(2) << get_ram_usage_mb() << " MB\n";
+        std::cout << "Type 'exit' or 'quit' to stop.\n" << std::endl;
+    } catch(std::exception& e) {
+        std::cerr << "\nError: " << e.what() << "\nPlease ensure 'tlumina_model.bin' exists." << std::endl;
         return 1;
     }
 
-    Tokenizer tok;
-    if (tok.id_to_token.empty()) {
-        std::cerr << "[ERROR] Vocabulary is empty. Make sure vocab.bin is present.\n";
-        return 1;
-    }
+    Tokenizer tokenizer;
+    std::string input;
 
-    std::cout << "Type your prompt. Enter 'exit' or 'quit' to stop.\n";
-
-    std::string line;
     while (true) {
         std::cout << "\n\033[1;32mPrompt>\033[0m ";
-        if (!std::getline(std::cin, line)) break;
-        if (line == "exit" || line == "quit") break;
-        if (line.empty()) continue;
-
-        // Reset KV cache for every new prompt
-        model.reset_cache();
-
-        std::vector<int> tokens = tok.encode(line);
-        if (tokens.empty()) {
-            std::cout << "\033[1;31m[Error] Prompt produced no tokens.\033[0m\n";
-            continue;
+        if (!std::getline(std::cin, input) || input == "exit" || input == "quit") {
+            break;
         }
-        if (static_cast<int>(tokens.size()) >= model.max_len - 8) {
-            std::cout << "[Error] Prompt too long (max "
-                      << model.max_len - 8 << " tokens).\n";
+        if (input.empty()) continue;
+
+        std::vector<int> tokens = tokenizer.encode(input);
+        if (tokens.size() >= static_cast<size_t>(model.max_len - 10)) {
+            std::cout << "Prompt too long! Max limit is " << model.max_len - 10 << " tokens." << std::endl;
             continue;
         }
 
-        std::cout << "\033[1;34mT-Lumina>\033[0m " << line << std::flush;
+        std::cout << "\033[1;34mT-Lumina>\033[0m " << input << std::flush;
 
-        auto t0 = std::chrono::steady_clock::now();
+        // Start Performance Timers
+        auto start_time = std::chrono::high_resolution_clock::now();
+        clock_t cpu_start = clock();
+        int generated_tokens = 0;
 
-        // Prefill: run all prompt tokens except the last
-        for (int i = 0; i < static_cast<int>(tokens.size()) - 1; ++i)
-            model.forward(tokens[i], i);
-
-        int next   = tokens.back();
-        int cur    = static_cast<int>(tokens.size()) - 1;
-        int max_gen = model.max_len - cur - 1;
-        int n_gen   = 0;
-
-        for (int step = 0; step < max_gen; ++step, ++cur) {
-            float* logits = model.forward(next, cur);
-            next = sample_top_p(logits, model.vocab_size, /*temp=*/0.8f, /*top_p=*/0.9f);
-
-            if (next == tok.eos_token) break;
-
-            std::string word = tok.decode(next);
-            if (!word.empty()) std::cout << word << std::flush;
-            ++n_gen;
+        // 1. Process Prompt
+        for (size_t i = 0; i + 1 < tokens.size(); ++i) {
+            model.forward(tokens[i], static_cast<int>(i));
         }
-        std::cout << '\n';
 
-        auto t1 = std::chrono::steady_clock::now();
-        double wall = std::chrono::duration<double>(t1 - t0).count();
-        double tps  = (wall > 0) ? n_gen / wall : 0.0;
+        int next_token = tokens.back();
+        int current_pos = static_cast<int>(tokens.size()) - 1;
+        int max_gen = model.max_len - current_pos - 1;
 
-        std::cout << "\033[90m┌──────────────────────────────────────┐\033[0m\n"
-                  << "\033[90m│\033[0m \033[1;35m⚡ Stats\033[0m"
-                  << "                               \033[90m│\033[0m\n"
-                  << "\033[90m│\033[0m Tokens  : " << std::left << std::setw(27) << n_gen  << " \033[90m│\033[0m\n"
-                  << "\033[90m│\033[0m Time    : " << std::left << std::fixed << std::setprecision(2) << std::setw(23) << wall << " sec  \033[90m│\033[0m\n"
-                  << "\033[90m│\033[0m Speed   : \033[1;32m" << std::left << std::setprecision(1) << std::setw(22) << tps   << " tok/s\033[0m \033[90m│\033[0m\n"
-                  << "\033[90m│\033[0m RAM     : " << std::left << std::setprecision(1) << std::setw(23) << ram_mb() << " MB  \033[90m│\033[0m\n"
-                  << "\033[90m└──────────────────────────────────────┘\033[0m\n";
+        // 2. Generate Tokens
+        for (int i = 0; i < max_gen; ++i, ++current_pos) {
+            float* logits = model.forward(next_token, current_pos);
+            next_token = sample_top_p(logits, model.vocab_size, 0.8f, 0.9f);
+            
+            if (next_token == tokenizer.eos_token) break;
+            
+            std::string word = tokenizer.decode(next_token);
+            std::cout << word << std::flush;
+            generated_tokens++;
+
+            // Optional: Stop early if the model generates "The end."
+            if (word.find("The end.") != std::string::npos) {
+                break;
+            }
+        }
+        std::cout << std::endl;
+
+        // End Performance Timers
+        auto end_time = std::chrono::high_resolution_clock::now();
+        clock_t cpu_end = clock();
+
+        // Calculate Metrics
+        std::chrono::duration<double> diff = end_time - start_time;
+        double wall_time = diff.count();
+        double cpu_time = ((double) (cpu_end - cpu_start)) / CLOCKS_PER_SEC;
+        double tok_per_sec = generated_tokens / wall_time;
+        double cpu_utilization = (cpu_time / wall_time) * 100.0;
+        double current_ram = get_ram_usage_mb();
+
+        // Print Performance Metrics Box
+        std::cout << "\n\033[90m┌──────────────────────────────────────────────┐\033[0m\n";
+        std::cout << "\033[90m│\033[0m \033[1;35m⚡ PERFORMANCE METRICS\033[0m                         \033[90m│\033[0m\n";
+        std::cout << "\033[90m├──────────────────────────────────────────────┤\033[0m\n";
+        std::cout << "\033[90m│\033[0m Tokens Generated : " << std::left << std::setw(25) << generated_tokens << " \033[90m│\033[0m\n";
+        std::cout << "\033[90m│\033[0m Time Taken       : " << std::left << std::fixed << std::setprecision(3) << std::setw(21) << wall_time << " sec \033[90m│\033[0m\n";
+        std::cout << "\033[90m│\033[0m Speed            : \033[1;32m" << std::left << std::fixed << std::setprecision(2) << std::setw(21) << tok_per_sec << " tok/s\033[0m \033[90m│\033[0m\n";
+        std::cout << "\033[90m│\033[0m RAM Usage        : " << std::left << std::fixed << std::setprecision(2) << std::setw(21) << current_ram << " MB  \033[90m│\033[0m\n";
+        std::cout << "\033[90m│\033[0m CPU Utilization  : " << std::left << std::fixed << std::setprecision(1) << std::setw(21) << cpu_utilization << " %   \033[90m│\033[0m\n";
+        std::cout << "\033[90m└──────────────────────────────────────────────┘\033[0m\n";
     }
-
-    std::cout << "Goodbye!\n";
+    
+    std::cout << "Exiting. Goodbye!" << std::endl;
     return 0;
 }
