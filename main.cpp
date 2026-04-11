@@ -85,10 +85,14 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    Tokenizer tokenizer;
+    // vocab file — model এর পাশে বা default
+    std::string vocab_path = "vocab.bin";
+    // config এর tokenizer type দিয়ে tokenizer initialize করো
+    Tokenizer tokenizer(vocab_path, model.cfg.tokenizer_type);
     if (tokenizer.id_to_token.empty()) {
-        std::cerr << "\033[1;31mError: vocab.bin not found!\033[0m\n";
-        std::cerr << "Run: python export_vocab.py\n";
+        std::cerr << "\033[1;31mError: " << vocab_path << " not found!\033[0m\n";
+        std::cerr << "GPT-2 model:  python scripts/export_vocab.py\n";
+        std::cerr << "LLaMA model:  python scripts/export_vocab_tinyllama.py\n";
         return 1;
     }
 
@@ -98,7 +102,16 @@ int main(int argc, char* argv[]) {
         if (!std::getline(std::cin, input) || input == "exit" || input == "quit") break;
         if (input.empty()) continue;
 
-        std::vector<int> tokens = tokenizer.encode(input);
+        // Chat template wrap করো যদি llama mode হয়
+        std::string wrapped_input;
+        if (model.cfg.tokenizer_type == "llama") {
+            wrapped_input = "<|system|>\nYou are a helpful assistant.</s>\n<|user|>\n" 
+                          + input + "</s>\n<|assistant|>\n";
+        } else {
+            wrapped_input = input;
+        }
+
+        std::vector<int> tokens = tokenizer.encode(wrapped_input);
         if (tokens.empty()) { std::cout << "(empty encode)\n"; continue; }
 
         if ((int)tokens.size() >= model.cfg.max_len - 10) {

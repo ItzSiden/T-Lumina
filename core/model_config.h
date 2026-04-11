@@ -28,6 +28,7 @@ struct ModelConfig {
     // Architecture type
     ArchType arch   = ArchType::TLUMINA;
     std::string arch_str = "tlumina";
+    std::string tokenizer_type = "gpt2";
 
     // RoPE theta (default GPT-NeoX style)
     float rope_theta = 10000.0f;
@@ -81,6 +82,7 @@ struct ModelConfig {
             get_float("rope_theta", rope_theta);
             get_str("arch",         arch_str);
             get_str("model_type",   arch_str);  // HuggingFace name
+            get_str("tokenizer",    tokenizer_type);
         }
 
         // Defaults ও derived values
@@ -109,6 +111,7 @@ struct ModelConfig {
 
     void print() const {
         std::cout << "[Config] arch=" << arch_str
+                  << " | tokenizer=" << tokenizer_type
                   << " | vocab=" << vocab_size
                   << " | d_model=" << d_model
                   << " | heads=" << n_heads << "/" << n_kv_heads
