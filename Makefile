@@ -1,17 +1,15 @@
 CXX      = g++
-CXXFLAGS = -O3 -march=native -std=c++17 -Wall -Wextra \
-           -mavx2 -mfma -ffast-math \
-           -I.
-LDFLAGS  =
-
-TARGET  = tlumina
-SRCS    = main.cpp core/model.cpp
+CXXFLAGS = -O3 -march=native -std=c++17 -Wall -Wextra
+TARGET   = tlumina
+SRCS     = main.cpp core/model.cpp
 
 $(TARGET): $(SRCS)
-	$(CXX) $(CXXFLAGS) $(SRCS) -o $(TARGET) $(LDFLAGS)
-	@echo "Build OK -> ./$(TARGET)  [or  ./$(TARGET) path/to/model.bin]"
+	$(CXX) $(CXXFLAGS) -o $(TARGET) $(SRCS)
+	@echo "✅ Build done: ./$(TARGET)"
+
+# তোমার নিজের model চালাতে
+run: $(TARGET)
+	./$(TARGET) tlumina_model.bin config.json
 
 clean:
 	rm -f $(TARGET)
-
-.PHONY: clean

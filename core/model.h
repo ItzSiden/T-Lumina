@@ -5,47 +5,64 @@
 #include <memory>
 #include "tensor.h"
 #include "kv_cache.h"
+#include "model_config.h"
 
 struct TLuminaBlock {
-    Tensor wq, wk, wv, wo; // Custom Attention Weights
-    Tensor norm1_w, norm2_w; // RMSNorm has no bias
+    Tensor wq, wk, wv, wo;
+    Tensor norm1_w, norm2_w;
     Tensor ffn_gate_w, ffn_up_w, ffn_down_w;
-    
+
     float ffn_gate_alpha = 1.0f;
-    float ffn_up_alpha = 1.0f;
+    float ffn_up_alpha   = 1.0f;
     float ffn_down_alpha = 1.0f;
 };
 
 class TLuminaModel {
 public:
-    int vocab_size = 50257;
-    int d_model = 256;
-    int n_heads = 8;
-    int d_ffn = 1024;
-    int n_layers = 8;
-    int max_len = 256;
-    int head_dim = 32;
+    // Config — সব dimensions এখান থেকে আসে, hardcoded নয়
+    ModelConfig cfg;
 
-    Tensor embed_w;
-    Tensor norm_w;
-    Tensor head_w;
+    // Shorthand getters (পুরনো code এর compatibility এর জন্য)
+    int& vocab_size() { return cfg.vocab_size; }
+    int& d_model()    { return cfg.d_model; }
+    int& n_heads()    { return cfg.n_heads; }
+    int& n_kv_heads() { return cfg.n_kv_heads; }
+    int& d_ffn()      { return cfg.d_ffn; }
+    int& n_layers()   { return cfg.n_layers; }
+    int& max_len()    { return cfg.max_len; }
+    int& head_dim()   { return cfg.head_dim; }
+    int& n_groups()   { return cfg.n_groups; }
+
+    // Weights
+    Tensor embed_w, norm_w, head_w;
     std::vector<TLuminaBlock> blocks;
     std::vector<std::unique_ptr<LayerKVCache>> kv_caches;
 
-    float* hidden;
-    float* hidden_norm;
-    float* q_buf;
-    float* k_buf;
-    float* v_buf;
-    float* att_scores;
-    float* ffn_gate_buf;
-    float* ffn_up_buf;
-    float* logits;
+    // Runtime buffers — dynamically allocated after config load
+    float* hidden       = nullptr;
+    float* hidden_norm  = nullptr;
+    float* q_buf        = nullptr;
+    float* k_buf        = nullptr;  // size: n_kv_heads * head_dim
+    float* v_buf        = nullptr;  // size: n_kv_heads * head_dim
+    float* att_scores   = nullptr;
+    float* ffn_gate_buf = nullptr;
+    float* ffn_up_buf   = nullptr;
+    float* out_attn_buf = nullptr;  // d_model (আর hardcoded [256] নয়)
+    float* ffn_down_buf = nullptr;  // d_model
+    float* logits_buf   = nullptr;
 
-    TLuminaModel();
+    TLuminaModel() = default;
     ~TLuminaModel();
 
-    void load(const std::string& path);
+    // config.json load করে তারপর model.bin load করে
+    void load(const std::string& bin_path, const std::string& config_path = "config.json");
     void reset_cache();
     float* forward(int token, int pos);
+
+private:
+    void allocate_buffers();
+    void free_buffers();
+
+    // Architecture-specific layer name mapping
+    std::string map_name(const std::string& canonical) const;
 };

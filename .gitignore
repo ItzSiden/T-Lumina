@@ -40,4 +40,6 @@
 # debug information files
 *.dwo
 
+#tlumina
 tlumina_model.bin
+model/*

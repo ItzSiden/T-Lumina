@@ -1,13 +1,20 @@
-from transformers import AutoTokenizer
 import struct
 
-tokenizer = AutoTokenizer.from_pretrained("TinyLlama/TinyLlama-1.1B-Chat-v1.0")
-
-with open("vocab.bin", "wb") as f:
-    for i in range(tokenizer.vocab_size):
-        text = tokenizer.decode([i])
-        text_bytes = text.encode('utf-8')
-        f.write(struct.pack("I", len(text_bytes)))
-        f.write(text_bytes)
-
-print("✅ TinyLlama Vocab exported! Download vocab.bin")
+with open("./tlumina_model.bin", "rb") as f:
+    count = 0
+    while count < 40:
+        len_bytes = f.read(4)
+        if not len_bytes or len(len_bytes) < 4: break
+        name_len = struct.unpack("I", len_bytes)[0]
+        name = f.read(name_len).decode("utf-8")
+        type_val = struct.unpack("I", f.read(4))[0]
+        
+        if type_val in (1, 2):
+            data_len = struct.unpack("I", f.read(4))[0]
+            f.seek(data_len, 1)
+        elif type_val in (4, 5):
+            f.read(4)  # len field
+            f.read(4)  # value
+        
+        print(f"[{type_val}] {name}")
+        count += 1

@@ -1,0 +1,9 @@
+{
+    "arch": "tlumina",
+    "vocab_size": 50257,
+    "d_model": 256,
+    "n_heads": 8,
+    "d_ffn": 1024,
+    "n_layers": 8,
+    "max_len": 256
+}

@@ -5,16 +5,14 @@
 #include <random>
 #include <chrono>
 #include <iomanip>
-#include <sys/resource.h> // For RAM usage on Linux/Codespaces
+#include <sys/resource.h>
 #include "core/model.h"
 #include "core/tokenizer.h"
 
-// Function to get current RAM usage in MB
 double get_ram_usage_mb() {
-    struct rusage r_usage;
-    getrusage(RUSAGE_SELF, &r_usage);
-    // ru_maxrss is in kilobytes on Linux
-    return r_usage.ru_maxrss / 1024.0;
+    struct rusage r;
+    getrusage(RUSAGE_SELF, &r);
+    return r.ru_maxrss / 1024.0;
 }
 
 int sample_top_p(float* logits, int size, float temp, float top_p) {
@@ -32,24 +30,23 @@ int sample_top_p(float* logits, int size, float temp, float top_p) {
 
     std::vector<std::pair<float, int>> probs(size);
     for (int i = 0; i < size; ++i) probs[i] = {logits[i], i};
+    std::sort(probs.begin(), probs.end(), [](auto& a, auto& b){ return a.first > b.first; });
 
-    std::sort(probs.begin(), probs.end(), [](auto& a, auto& b) { return a.first > b.first; });
-
-    float cumulative = 0.0f;
-    std::vector<std::pair<float, int>> filtered;
+    float cum = 0.0f;
+    std::vector<std::pair<float,int>> filtered;
     for (auto& p : probs) {
         filtered.push_back(p);
-        cumulative += p.first;
-        if (cumulative > top_p) break;
+        cum += p.first;
+        if (cum > top_p) break;
     }
 
-    float filtered_sum = 0.0f;
-    for (auto& p : filtered) filtered_sum += p.first;
+    float fsum = 0.0f;
+    for (auto& p : filtered) fsum += p.first;
 
     std::random_device rd;
     std::mt19937 gen(rd());
     std::uniform_real_distribution<float> dis(0.0f, 1.0f);
-    float r = dis(gen) * filtered_sum;
+    float r = dis(gen) * fsum;
 
     float acc = 0.0f;
     for (auto& p : filtered) {
@@ -59,99 +56,104 @@ int sample_top_p(float* logits, int size, float temp, float top_p) {
     return filtered.back().second;
 }
 
-int main() {
+int main(int argc, char* argv[]) {
     std::cout << "\033[1;36m====================================================\033[0m\n";
-    std::cout << "\033[1;33mT-LUMINA INFERENCE ENGINE (Ternary-First LLM)\033[0m\n";
-    std::cout << "\033[1;32mArchitecture by (C) Abdul Aleem, Dinajpur, Bangladesh\033[0m\n";
+    std::cout << "\033[1;33m  T-LUMINA INFERENCE ENGINE (Ternary-First LLM)\033[0m\n";
+    std::cout << "\033[1;32m  Architecture by (C) Abdul Aleem, Dinajpur, BD\033[0m\n";
     std::cout << "\033[1;36m====================================================\033[0m\n\n";
 
-    std::cout << "Loading T-Lumina Model..." << std::flush;
+    // Binary ও config path — argument থেকে নেয়, না হলে default
+    std::string bin_path    = "tlumina_model.bin";
+    std::string config_path = "config.json";
+
+    if (argc >= 2) bin_path    = argv[1];
+    if (argc >= 3) config_path = argv[2];
+
+    std::cout << "Loading model: " << bin_path << "\n";
+    std::cout << "Config:        " << config_path << "\n\n";
+
     TLuminaModel model;
-    
     try {
-        model.load("tlumina_model.bin");
-        std::cout << " \033[1;32m[OK]\033[0m\n";
-        std::cout << "RAM Usage after load: " << std::fixed << std::setprecision(2) << get_ram_usage_mb() << " MB\n";
-        std::cout << "Type 'exit' or 'quit' to stop.\n" << std::endl;
-    } catch(std::exception& e) {
-        std::cerr << "\nError: " << e.what() << "\nPlease ensure 'tlumina_model.bin' exists." << std::endl;
+        model.load(bin_path, config_path);
+        std::cout << "\033[1;32m[OK] Model loaded!\033[0m\n";
+        std::cout << "RAM after load: " << std::fixed << std::setprecision(1)
+                  << get_ram_usage_mb() << " MB\n";
+        std::cout << "Type 'exit' or 'quit' to stop.\n\n";
+    } catch (std::exception& e) {
+        std::cerr << "\033[1;31mError: " << e.what() << "\033[0m\n";
+        std::cerr << "Usage: ./tlumina [model.bin] [config.json]\n";
         return 1;
     }
 
     Tokenizer tokenizer;
-    std::string input;
+    if (tokenizer.id_to_token.empty()) {
+        std::cerr << "\033[1;31mError: vocab.bin not found!\033[0m\n";
+        std::cerr << "Run: python export_vocab.py\n";
+        return 1;
+    }
 
+    std::string input;
     while (true) {
         std::cout << "\n\033[1;32mPrompt>\033[0m ";
-        if (!std::getline(std::cin, input) || input == "exit" || input == "quit") {
-            break;
-        }
+        if (!std::getline(std::cin, input) || input == "exit" || input == "quit") break;
         if (input.empty()) continue;
 
         std::vector<int> tokens = tokenizer.encode(input);
-        if (tokens.size() >= static_cast<size_t>(model.max_len - 10)) {
-            std::cout << "Prompt too long! Max limit is " << model.max_len - 10 << " tokens." << std::endl;
+        if (tokens.empty()) { std::cout << "(empty encode)\n"; continue; }
+
+        if ((int)tokens.size() >= model.cfg.max_len - 10) {
+            std::cout << "Prompt too long! Max: " << model.cfg.max_len - 10 << " tokens.\n";
             continue;
         }
 
+        // ✅ Cache reset প্রতিটা নতুন prompt এ
+        model.reset_cache();
+
         std::cout << "\033[1;34mT-Lumina>\033[0m " << input << std::flush;
 
-        // Start Performance Timers
-        auto start_time = std::chrono::high_resolution_clock::now();
-        clock_t cpu_start = clock();
-        int generated_tokens = 0;
+        auto  t0        = std::chrono::high_resolution_clock::now();
+        clock_t cpu0    = clock();
+        int gen_tokens  = 0;
 
-        // 1. Process Prompt
-        for (size_t i = 0; i + 1 < tokens.size(); ++i) {
-            model.forward(tokens[i], static_cast<int>(i));
-        }
+        // Prompt prefill
+        for (size_t i = 0; i + 1 < tokens.size(); ++i)
+            model.forward(tokens[i], (int)i);
 
-        int next_token = tokens.back();
-        int current_pos = static_cast<int>(tokens.size()) - 1;
-        int max_gen = model.max_len - current_pos - 1;
+        int next_token  = tokens.back();
+        int cur_pos     = (int)tokens.size() - 1;
+        int max_gen     = model.cfg.max_len - cur_pos - 1;
 
-        // 2. Generate Tokens
-        for (int i = 0; i < max_gen; ++i, ++current_pos) {
-            float* logits = model.forward(next_token, current_pos);
-            next_token = sample_top_p(logits, model.vocab_size, 0.8f, 0.9f);
-            
+        // Generate
+        for (int i = 0; i < max_gen; ++i, ++cur_pos) {
+            float* logits = model.forward(next_token, cur_pos);
+            next_token    = sample_top_p(logits, model.cfg.vocab_size, 0.8f, 0.9f);
+
             if (next_token == tokenizer.eos_token) break;
-            
-            std::string word = tokenizer.decode(next_token);
-            std::cout << word << std::flush;
-            generated_tokens++;
 
-            // Optional: Stop early if the model generates "The end."
-            if (word.find("The end.") != std::string::npos) {
-                break;
-            }
+            std::cout << tokenizer.decode(next_token) << std::flush;
+            gen_tokens++;
         }
-        std::cout << std::endl;
+        std::cout << "\n";
 
-        // End Performance Timers
-        auto end_time = std::chrono::high_resolution_clock::now();
-        clock_t cpu_end = clock();
+        // Metrics
+        auto   t1       = std::chrono::high_resolution_clock::now();
+        clock_t cpu1    = clock();
+        double wall     = std::chrono::duration<double>(t1 - t0).count();
+        double cpu_t    = (double)(cpu1 - cpu0) / CLOCKS_PER_SEC;
+        double tps      = gen_tokens / wall;
+        double cpu_util = (cpu_t / wall) * 100.0;
 
-        // Calculate Metrics
-        std::chrono::duration<double> diff = end_time - start_time;
-        double wall_time = diff.count();
-        double cpu_time = ((double) (cpu_end - cpu_start)) / CLOCKS_PER_SEC;
-        double tok_per_sec = generated_tokens / wall_time;
-        double cpu_utilization = (cpu_time / wall_time) * 100.0;
-        double current_ram = get_ram_usage_mb();
-
-        // Print Performance Metrics Box
         std::cout << "\n\033[90m┌──────────────────────────────────────────────┐\033[0m\n";
         std::cout << "\033[90m│\033[0m \033[1;35m⚡ PERFORMANCE METRICS\033[0m                         \033[90m│\033[0m\n";
         std::cout << "\033[90m├──────────────────────────────────────────────┤\033[0m\n";
-        std::cout << "\033[90m│\033[0m Tokens Generated : " << std::left << std::setw(25) << generated_tokens << " \033[90m│\033[0m\n";
-        std::cout << "\033[90m│\033[0m Time Taken       : " << std::left << std::fixed << std::setprecision(3) << std::setw(21) << wall_time << " sec \033[90m│\033[0m\n";
-        std::cout << "\033[90m│\033[0m Speed            : \033[1;32m" << std::left << std::fixed << std::setprecision(2) << std::setw(21) << tok_per_sec << " tok/s\033[0m \033[90m│\033[0m\n";
-        std::cout << "\033[90m│\033[0m RAM Usage        : " << std::left << std::fixed << std::setprecision(2) << std::setw(21) << current_ram << " MB  \033[90m│\033[0m\n";
-        std::cout << "\033[90m│\033[0m CPU Utilization  : " << std::left << std::fixed << std::setprecision(1) << std::setw(21) << cpu_utilization << " %   \033[90m│\033[0m\n";
+        std::cout << "\033[90m│\033[0m Tokens Generated : " << std::left << std::setw(25) << gen_tokens     << " \033[90m│\033[0m\n";
+        std::cout << "\033[90m│\033[0m Time Taken       : " << std::left << std::fixed << std::setprecision(3) << std::setw(21) << wall      << " sec \033[90m│\033[0m\n";
+        std::cout << "\033[90m│\033[0m Speed            : \033[1;32m" << std::left << std::fixed << std::setprecision(2) << std::setw(21) << tps       << " tok/s\033[0m \033[90m│\033[0m\n";
+        std::cout << "\033[90m│\033[0m RAM Usage        : " << std::left << std::fixed << std::setprecision(1) << std::setw(21) << get_ram_usage_mb() << " MB  \033[90m│\033[0m\n";
+        std::cout << "\033[90m│\033[0m CPU Utilization  : " << std::left << std::fixed << std::setprecision(1) << std::setw(21) << cpu_util  << " %   \033[90m│\033[0m\n";
         std::cout << "\033[90m└──────────────────────────────────────────────┘\033[0m\n";
     }
-    
-    std::cout << "Exiting. Goodbye!" << std::endl;
+
+    std::cout << "Goodbye!\n";
     return 0;
 }
