@@ -7,13 +7,10 @@
 #include "kv_cache.h"
 
 struct TLuminaBlock {
-    Tensor attn_in_w, attn_in_b;
-    Tensor attn_out_w, attn_out_b;
-    Tensor norm1_w, norm1_b;
-    Tensor norm2_w, norm2_b;
+    Tensor wq, wk, wv, wo; // Custom Attention Weights
+    Tensor norm1_w, norm2_w; // RMSNorm has no bias
     Tensor ffn_gate_w, ffn_up_w, ffn_down_w;
     
-    // নতুন Alpha ভেরিয়েবল
     float ffn_gate_alpha = 1.0f;
     float ffn_up_alpha = 1.0f;
     float ffn_down_alpha = 1.0f;
@@ -30,15 +27,16 @@ public:
     int head_dim = 32;
 
     Tensor embed_w;
-    Tensor pos_emb;
-    Tensor norm_w, norm_b;
+    Tensor norm_w;
     Tensor head_w;
     std::vector<TLuminaBlock> blocks;
     std::vector<std::unique_ptr<LayerKVCache>> kv_caches;
 
     float* hidden;
     float* hidden_norm;
-    float* qkv_buf;
+    float* q_buf;
+    float* k_buf;
+    float* v_buf;
     float* att_scores;
     float* ffn_gate_buf;
     float* ffn_up_buf;
