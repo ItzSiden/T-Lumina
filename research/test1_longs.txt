@@ -1,0 +1,116 @@
+============================================================
+🚀 MODEL A: FP32 BASELINE | 5000 steps | WikiText-2
+Step   100 | loss=7.2280 | 0.3m
+Step   200 | loss=6.7850 | 0.5m
+Step   300 | loss=6.6208 | 0.8m
+Step   400 | loss=6.5648 | 1.1m
+Step   500 | loss=6.3827 | 1.4m
+Step   600 | loss=6.1121 | 1.7m
+Step   700 | loss=6.0678 | 1.9m
+Step   800 | loss=6.0009 | 2.2m
+Step   900 | loss=5.6668 | 2.5m
+Step  1000 | loss=5.6931 | 2.8m
+Validation PPL: 231.93
+Step  1100 | loss=5.8634 | 3.1m
+Step  1200 | loss=5.4021 | 3.3m
+Step  1300 | loss=5.5135 | 3.6m
+Step  1400 | loss=5.4987 | 3.9m
+Step  1500 | loss=5.4375 | 4.2m
+Step  1600 | loss=5.1808 | 4.4m
+Step  1700 | loss=5.4774 | 4.7m
+Step  1800 | loss=5.0774 | 5.0m
+Step  1900 | loss=5.1227 | 5.3m
+Step  2000 | loss=5.1140 | 5.5m
+Validation PPL: 181.05
+Step  2100 | loss=5.1571 | 5.9m
+Step  2200 | loss=5.2391 | 6.1m
+Step  2300 | loss=5.1234 | 6.4m
+Step  2400 | loss=4.8615 | 6.7m
+Step  2500 | loss=4.7913 | 7.0m
+Step  2600 | loss=4.7267 | 7.2m
+Step  2700 | loss=4.6767 | 7.5m
+Step  2800 | loss=4.7799 | 7.8m
+Step  2900 | loss=4.8354 | 8.1m
+Step  3000 | loss=4.5661 | 8.3m
+Validation PPL: 181.78
+Step  3100 | loss=4.3179 | 8.6m
+Step  3200 | loss=4.4505 | 8.9m
+Step  3300 | loss=4.6536 | 9.2m
+Step  3400 | loss=4.5448 | 9.5m
+Step  3500 | loss=4.2663 | 9.7m
+Step  3600 | loss=4.2915 | 10.0m
+Step  3700 | loss=4.5071 | 10.3m
+Step  3800 | loss=4.3881 | 10.6m
+Step  3900 | loss=4.4212 | 10.8m
+Step  4000 | loss=4.5591 | 11.1m
+Validation PPL: 196.46
+Step  4100 | loss=4.2202 | 11.4m
+Step  4200 | loss=4.0190 | 11.7m
+Step  4300 | loss=4.0885 | 12.0m
+Step  4400 | loss=4.0550 | 12.2m
+Step  4500 | loss=4.2240 | 12.5m
+Step  4600 | loss=4.1674 | 12.8m
+Step  4700 | loss=4.2298 | 13.1m
+Step  4800 | loss=4.2249 | 13.4m
+Step  4900 | loss=4.1923 | 13.6m
+Step  5000 | loss=4.2157 | 13.9m
+Validation PPL: 205.21
+✅ MODEL A Training Complete! Final PPL: 181.05
+============================================================
+⚡ MODEL B: TERNARY FFN | 5000 steps | WikiText-2
+Step   100 | loss=7.4018 | 0.3m
+Step   200 | loss=6.9651 | 0.5m
+Step   300 | loss=6.8279 | 0.8m
+Step   400 | loss=6.7284 | 1.1m
+Step   500 | loss=6.5835 | 1.3m
+Step   600 | loss=6.3307 | 1.6m
+Step   700 | loss=6.2676 | 1.9m
+Step   800 | loss=6.1822 | 2.2m
+Step   900 | loss=5.8848 | 2.4m
+Step  1000 | loss=5.8745 | 2.7m
+Validation PPL: 270.78
+Step  1100 | loss=6.0627 | 3.0m
+Step  1200 | loss=5.6189 | 3.3m
+Step  1300 | loss=5.7338 | 3.5m
+Step  1400 | loss=5.7345 | 3.8m
+Step  1500 | loss=5.6830 | 4.1m
+Step  1600 | loss=5.3851 | 4.3m
+Step  1700 | loss=5.7075 | 4.6m
+Step  1800 | loss=5.3925 | 4.8m
+Step  1900 | loss=5.4271 | 5.1m
+Step  2000 | loss=5.4180 | 5.4m
+Validation PPL: 198.74
+Step  2100 | loss=5.4458 | 5.7m
+Step  2200 | loss=5.5194 | 5.9m
+Step  2300 | loss=5.3648 | 6.2m
+Step  2400 | loss=5.2460 | 6.5m
+Step  2500 | loss=5.2079 | 6.7m
+Step  2600 | loss=5.1253 | 7.0m
+Step  2700 | loss=5.0437 | 7.3m
+Step  2800 | loss=5.1382 | 7.5m
+Step  2900 | loss=5.2005 | 7.8m
+Step  3000 | loss=5.0776 | 8.1m
+Validation PPL: 184.86
+Step  3100 | loss=4.7972 | 8.4m
+Step  3200 | loss=4.9122 | 8.6m
+Step  3300 | loss=5.1369 | 8.9m
+Step  3400 | loss=4.9555 | 9.2m
+Step  3500 | loss=4.8222 | 9.4m
+Step  3600 | loss=4.8507 | 9.7m
+Step  3700 | loss=5.1221 | 9.9m
+Step  3800 | loss=4.9559 | 10.2m
+Step  3900 | loss=4.9984 | 10.5m
+Step  4000 | loss=5.1433 | 10.7m
+Validation PPL: 180.08
+Step  4100 | loss=4.8257 | 11.0m
+Step  4200 | loss=4.6010 | 11.3m
+Step  4300 | loss=4.6948 | 11.6m
+Step  4400 | loss=4.5992 | 11.8m
+Step  4500 | loss=4.8385 | 12.1m
+Step  4600 | loss=4.7445 | 12.4m
+Step  4700 | loss=4.8409 | 12.6m
+Step  4800 | loss=4.8082 | 12.9m
+Step  4900 | loss=4.7331 | 13.2m
+Step  5000 | loss=4.8023 | 13.4m
+Validation PPL: 178.11
+✅ MODEL B Training Complete! Final PPL: 178.11
